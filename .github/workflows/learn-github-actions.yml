@@ -11,3 +11,10 @@ jobs:
           node-version: '14'
       - run: npm install -g bats
       - run: bats -v
+      - name: Read file or arbitrary multiline value into a github actions output
+        id: step_one
+        run: |
+          {
+            echo 'output_name<<ANY_DELIMITER_YOU_WANT'
+            cat ../../Example.xml
+          } >> "$GITHUB_OUTPUT"
