@@ -15,5 +15,6 @@ jobs:
         id: step_one
         run: |
           {
+            cat $GITHUB_WORKSPACE/Example.xml
             printenv
           } 
