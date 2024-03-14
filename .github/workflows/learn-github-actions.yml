@@ -15,6 +15,5 @@ jobs:
         id: step_one
         run: |
           {
-            echo 'output_name<<ANY_DELIMITER_YOU_WANT'
-            cat ../../Example.xml
+            printenv
           } >> "$GITHUB_OUTPUT"
