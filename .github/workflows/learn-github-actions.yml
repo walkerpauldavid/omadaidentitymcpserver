@@ -16,4 +16,4 @@ jobs:
         run: |
           {
             printenv
-          } >> "$GITHUB_OUTPUT"
+          } 
