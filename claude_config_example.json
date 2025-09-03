@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "omada-server": {
+      "command": "python",
+      "args": ["C:\\Users\\demoadm\\Documents\\Code\\helloWorldServer\\server.py"],
+      "env": {
+        "PYTHONPATH": "C:\\Users\\demoadm\\Documents\\Code\\helloWorldServer"
+      }
+    }
+  }
+}
