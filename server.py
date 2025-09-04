@@ -14,34 +14,24 @@ load_dotenv()
 
 # Custom Exception Classes
 class OmadaServerError(Exception):
-    """Base exception for Omada server errors"""
+    """Base exception for Omada server errors."""
     def __init__(self, message: str, status_code: int = None, response_body: str = None):
         self.status_code = status_code
         self.response_body = response_body
         super().__init__(message)
 
 class AuthenticationError(OmadaServerError):
-    """Raised when authentication fails"""
+    """Raised when authentication fails."""
     pass
 
 class ODataQueryError(OmadaServerError):
-    """Raised when OData query is malformed or fails"""
+    """Raised when OData query is malformed or fails."""
     pass
 
 mcp = FastMCP("HelloMCP")
 
 def _build_odata_filter(field_name: str, value: str, operator: str) -> str:
-    """
-    Build an OData filter expression based on the operator.
-    
-    Args:
-        field_name: The field name (e.g., "FIRSTNAME", "LASTNAME")
-        value: The value to filter by
-        operator: The OData operator (eq, ne, contains, startswith, etc.)
-        
-    Returns:
-        OData filter expression string
-    """
+    """Build an OData filter expression based on the operator."""
     # Escape single quotes in value
     escaped_value = value.replace("'", "''")
     
@@ -66,6 +56,7 @@ def _build_odata_filter(field_name: str, value: str, operator: str) -> str:
 
 
 class AzureOAuth2Client:
+    """Azure OAuth2 client for handling authentication with Microsoft services."""
     def __init__(self):
         self.tenant_id = os.getenv("TENANT_ID")
         self.client_id = os.getenv("CLIENT_ID")
@@ -81,15 +72,7 @@ class AzureOAuth2Client:
             self.access_token_url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
     
     async def get_access_token(self, scope: str = None) -> Dict[str, Any]:
-        """
-        Get an OAuth2 access token using client credentials flow.
-        
-        Args:
-            scope: The scope for the access token (default reads from OAUTH2_SCOPE env var)
-            
-        Returns:
-            Dict containing token information
-        """
+        """Get an OAuth2 access token using client credentials flow."""
         # Use environment variable scope if none provided
         if scope is None:
             scope = os.getenv("OAUTH2_SCOPE", "api://08eeb6a4-4aee-406f-baa5-4922993f09f3/.default")
@@ -222,11 +205,11 @@ async def query_omada_entity(entity_type: str = "Identity",
         if entity_type not in valid_entities:
             return f"❌ Invalid entity type '{entity_type}'. Valid types: {', '.join(valid_entities)}"
         
-        # Validate OData operators
+        # Validate OData operators for deprecated parameters
         valid_operators = ["eq", "ne", "gt", "ge", "lt", "le", "like", "startswith", "endswith", "contains", "substringof"]
-        if firstname_operator not in valid_operators:
+        if firstname and firstname_operator not in valid_operators:
             return f"❌ Invalid firstname_operator '{firstname_operator}'. Valid operators: {', '.join(valid_operators)}"
-        if lastname_operator not in valid_operators:
+        if lastname and lastname_operator not in valid_operators:
             return f"❌ Invalid lastname_operator '{lastname_operator}'. Valid operators: {', '.join(valid_operators)}"
         
         # Get base URL from parameter or environment
@@ -275,7 +258,7 @@ async def query_omada_entity(entity_type: str = "Identity",
                     field_operator = field_filter.get("operator", "eq")
                     auto_filters.append(_build_odata_filter(field_name, field_value, field_operator))
         
-        # For Identity entities, handle deprecated firstname/lastname filtering (backward compatibility)
+        # For Identity entities, handle deprecated name filtering (backward compatibility)
         elif entity_type == "Identity":
             if firstname:
                 auto_filters.append(_build_odata_filter("FIRSTNAME", firstname, firstname_operator))
@@ -406,27 +389,7 @@ async def query_omada_identity(firstname: str = None, lastname: str = None,
                               select_fields: str = None,
                               order_by: str = None,
                               include_count: bool = False) -> str:
-    """
-    Query Omada Identity entities (wrapper for query_omada_entity).
-    
-    Args:
-        firstname: First name to search for
-        lastname: Last name to search for
-        firstname_operator: OData operator for firstname (eq, ne, contains, startswith, endswith, etc)
-        lastname_operator: OData operator for lastname (eq, ne, contains, startswith, endswith, etc)
-        omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
-        filter_condition: Custom OData filter condition
-        count_only: If True, returns only the count
-        top: Maximum number of records to return
-        skip: Number of records to skip
-        select_fields: Comma-separated list of fields to select
-        order_by: Field(s) to order by
-        include_count: Include total count in response
-        
-    Returns:
-        JSON response with identity data or error message
-    """
+    """Query Omada Identity entities with optional name filtering."""
     return await query_omada_entity(
         entity_type="Identity",
         firstname=firstname,
@@ -457,26 +420,7 @@ async def query_omada_resources(resource_type_id: int = None,
                                select_fields: str = None,
                                order_by: str = None,
                                include_count: bool = False) -> str:
-    """
-    Query Omada Resource entities (wrapper for query_omada_entity).
-    
-    Args:
-        resource_type_id: Numeric ID for resource type (e.g., 1011066 for Application Roles)
-        resource_type_name: Name-based lookup for resource type (e.g., "APPLICATION_ROLES")
-        system_id: Numeric ID for system reference to filter resources by system (e.g., 1011066)
-        omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
-        filter_condition: Custom OData filter condition
-        count_only: If True, returns only the count
-        top: Maximum number of records to return
-        skip: Number of records to skip
-        select_fields: Comma-separated list of fields to select
-        order_by: Field(s) to order by
-        include_count: Include total count in response
-        
-    Returns:
-        JSON response with resource data or error message
-    """
+    """Query Omada Resource entities with optional filtering."""
     return await query_omada_entity(
         entity_type="Resource",
         resource_type_id=resource_type_id,
@@ -506,28 +450,7 @@ async def query_omada_entities(entity_type: str = "Identity",
                               order_by: str = None,
                               expand: str = None,
                               include_count: bool = False) -> str:
-    """
-    Modern generic query function for Omada entities using field filters.
-    
-    Args:
-        entity_type: Type of entity to query (Identity, Resource, System, etc)
-        field_filters: List of field filters:
-                      [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
-                       {"field": "LASTNAME", "value": "Taylor", "operator": "startswith"}]
-        omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
-        filter_condition: Custom OData filter condition
-        count_only: If True, returns only the count
-        top: Maximum number of records to return
-        skip: Number of records to skip
-        select_fields: Comma-separated list of fields to select
-        order_by: Field(s) to order by
-        expand: Comma-separated list of related entities to expand
-        include_count: Include total count in response
-        
-    Returns:
-        JSON response with entity data or error message
-    """
+    """Modern generic query function for Omada entities using field filters."""
     return await query_omada_entity(
         entity_type=entity_type,
         field_filters=field_filters,
@@ -554,24 +477,7 @@ async def query_calculated_assignments(identity_id: int = None,
                                       skip: int = None,
                                       order_by: str = None,
                                       include_count: bool = False) -> str:
-    """
-    Query Omada CalculatedAssignments entities (wrapper for query_omada_entity).
-    
-    Args:
-        identity_id: Numeric ID for identity to get assignments for (e.g., 1006500)
-        select_fields: Fields to select (default: "AssignmentKey,AccountName")
-        expand: Related entities to expand (default: "Identity,Resource,ResourceType")
-        omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
-        filter_condition: Custom OData filter condition
-        top: Maximum number of records to return
-        skip: Number of records to skip
-        order_by: Field(s) to order by
-        include_count: Include total count in response
-        
-    Returns:
-        JSON response with calculated assignments data or error message
-    """
+    """Query Omada CalculatedAssignments entities for specific identity."""
     return await query_omada_entity(
         entity_type="CalculatedAssignments",
         identity_id=identity_id,
@@ -594,21 +500,7 @@ async def get_all_omada_identities(omada_base_url: str = None,
                                   select_fields: str = None,
                                   order_by: str = None,
                                   include_count: bool = True) -> str:
-    """
-    Retrieve all identities from Omada Identity system with pagination support.
-    
-    Args:
-        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
-        top: Maximum number of records to return (default: 100)
-        skip: Number of records to skip for pagination
-        select_fields: Comma-separated list of fields to select
-        order_by: Field(s) to order by
-        include_count: Include total count in response
-        
-    Returns:
-        JSON response with all identity data or error message
-    """
+    """Retrieve all identities from Omada Identity system with pagination support."""
     return await query_omada_identity(
         omada_base_url=omada_base_url,
         scope=scope,
@@ -624,17 +516,7 @@ async def get_all_omada_identities(omada_base_url: str = None,
 async def count_omada_identities(filter_condition: str = None,
                                 omada_base_url: str = None,
                                 scope: str = None) -> str:
-    """
-    Count identities in Omada Identity system with optional filtering.
-    
-    Args:
-        filter_condition: OData filter condition (optional)
-        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
-        
-    Returns:
-        JSON response with count or error message
-    """
+    """Count identities in Omada Identity system with optional filtering."""
     return await query_omada_identity(
         omada_base_url=omada_base_url,
         scope=scope,
@@ -644,19 +526,12 @@ async def count_omada_identities(filter_condition: str = None,
 
 @mcp.tool()
 def ping() -> str:
+    """Simple ping function to test server connectivity."""
     return "pong"
 
 @mcp.tool()
 async def get_azure_token(scope: str = None) -> str:
-    """
-    Get an Azure OAuth2 Bearer token for the specified scope.
-    
-    Args:
-        scope: OAuth2 scope (default: Microsoft Graph API)
-        
-    Returns:
-        Bearer token string
-    """
+    """Get an Azure OAuth2 Bearer token for the specified scope."""
     try:
         token_data = await get_cached_token(scope)
         bearer_token = f"Bearer {token_data['access_token']}"
@@ -666,15 +541,7 @@ async def get_azure_token(scope: str = None) -> str:
 
 @mcp.tool()
 async def get_azure_token_info(scope: str = None) -> str:
-    """
-    Get detailed Azure OAuth2 token information including expiry.
-    
-    Args:
-        scope: OAuth2 scope (default: Microsoft Graph API)
-        
-    Returns:
-        JSON string with token details
-    """
+    """Get detailed Azure OAuth2 token information including expiry."""
     try:
         token_data = await get_cached_token(scope)
         
@@ -695,16 +562,7 @@ async def get_azure_token_info(scope: str = None) -> str:
 @mcp.tool()
 async def test_azure_token(api_endpoint: str = "https://graph.microsoft.com/v1.0/me", 
                           scope: str = "https://graph.microsoft.com/.default") -> str:
-    """
-    Test the Azure token by making an authenticated API call.
-    
-    Args:
-        api_endpoint: API endpoint to test (default: Microsoft Graph /me)
-        scope: OAuth2 scope for the token
-        
-    Returns:
-        API response or error message
-    """
+    """Test the Azure token by making an authenticated API call."""
     try:
         # Get the token
         token_data = await get_cached_token(scope)
@@ -728,7 +586,7 @@ async def test_azure_token(api_endpoint: str = "https://graph.microsoft.com/v1.0
         return f"Error testing token: {str(e)}"
 
 async def test_token_locally():
-    """Test function to run locally and see token output"""
+    """Test function to run locally and see token output."""
     global _cached_token
     print("Testing Azure OAuth2 token retrieval...")
     
@@ -745,7 +603,7 @@ async def test_token_locally():
         print(token_info)
         
         print("\nTesting Omada API call:")
-        result = await query_omada_identity("Emma", "Taylor")
+        result = await query_omada_identity(firstname="Emma", lastname="Taylor")
         print(result)
         
     except Exception as e:

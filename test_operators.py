@@ -2,8 +2,11 @@ import asyncio
 import json
 from server import query_omada_identity, query_omada_entity
 
-def display_filtered_result(result_json, test_name):
-    """Extract and display only specific fields from the JSON result"""
+def display_filtered_result(result_json, test_name, show_fields=None):
+    """Extract and display specific fields from the JSON result"""
+    if show_fields is None:
+        show_fields = ['Id', 'DISPLAYNAME']
+        
     try:
         # Parse the JSON string
         data = json.loads(result_json)
@@ -16,14 +19,23 @@ def display_filtered_result(result_json, test_name):
         print(f"Filter: {data.get('filter', 'N/A')}")
         print(f"Endpoint: {data.get('endpoint', 'N/A')}")
         
-        # Extract ID and DisplayName from data.value array
+        # Extract specified fields from data.value array
         if 'data' in data and 'value' in data['data']:
             print("\nIdentities:")
             print("-" * 30)
             for i, item in enumerate(data['data']['value'], 1):
-                item_id = item.get('Id', 'N/A')
-                display_name = item.get('DISPLAYNAME', 'N/A')
-                print(f"{i}. ID: {item_id}, DisplayName: {display_name}")
+                result_line = f"{i}."
+                for field in show_fields:
+                    value = item.get(field, 'N/A')
+                    if field == 'Id':
+                        result_line += f" ID: {value}"
+                    elif field == 'FIRSTNAME':
+                        result_line += f", FirstName: {value}"
+                    elif field == 'LASTNAME':
+                        result_line += f", LastName: {value}"
+                    elif field == 'DISPLAYNAME':
+                        result_line += f", DisplayName: {value}"
+                print(result_line)
         else:
             print("\nNo identity data found")
             
@@ -47,62 +59,58 @@ async def test_firstname_not_equals():
     result = await query_omada_identity(
         firstname="Emma",
         firstname_operator="ne",
-        top=5
-    )
-    display_filtered_result(result, "Test 1: Firstname NOT EQUALS 'Emma'")
-    
-    # Test 2: Using direct entity function
-    result = await query_omada_entity(
-        entity_type="Identity",
-        firstname="Emma",
-        firstname_operator="ne",
         top=5,
-        include_count=True
+        select_fields="Id,FIRSTNAME"
     )
-    display_filtered_result(result, "Test 2: Direct Entity Query (firstname ne 'Emma')")
+    display_filtered_result(result, "Test 1: Firstname NOT EQUALS 'Emma'", ['Id', 'FIRSTNAME'])
     
-    # Test 3: Combined operators - firstname ne and lastname startswith
+    # Test 2: Combined operators - firstname ne and lastname startswith
     result = await query_omada_identity(
         firstname="Emma",
         firstname_operator="ne",
         lastname="T",
         lastname_operator="startswith",
-        top=3
+        top=3,
+        select_fields="Id,FIRSTNAME,LASTNAME"
     )
-    display_filtered_result(result, "Test 3: Combined Operators (firstname ne 'Emma' AND lastname startswith 'T')")
+    display_filtered_result(result, "Test 2: Combined Operators (firstname ne 'Emma' AND lastname startswith 'T')", ['Id', 'FIRSTNAME', 'LASTNAME'])
 
 async def test_other_operators():
     # Test contains (may not be supported by Omada)
     result = await query_omada_identity(
         firstname="mm",
         firstname_operator="contains",
-        top=3
+        top=3,
+        select_fields="Id,FIRSTNAME"
     )
-    display_filtered_result(result, "Test 4: Contains Operator (firstname contains 'mm')")
+    display_filtered_result(result, "Test 3: Contains Operator (firstname contains 'mm')", ['Id', 'FIRSTNAME'])
     
     # Test startswith
     result = await query_omada_identity(
         lastname="Tay",
         lastname_operator="startswith",
-        top=3
+        top=3,
+        select_fields="Id,LASTNAME"
     )
-    display_filtered_result(result, "Test 5: Starts With Operator (lastname startswith 'Tay')")
+    display_filtered_result(result, "Test 4: Starts With Operator (lastname startswith 'Tay')", ['Id', 'LASTNAME'])
     
     # Test Like operator - appears to have syntax issues in OData
     result = await query_omada_identity(
         firstname="Em%",
         firstname_operator="like",
-        top=3
+        top=3,
+        select_fields="Id,FIRSTNAME"
     )
-    display_filtered_result(result, "Test 6: Like Operator (firstname like 'Em%') - May not be supported")
+    display_filtered_result(result, "Test 5: Like Operator (firstname like 'Em%') - May not be supported", ['Id', 'FIRSTNAME'])
     
     # Test working equals operator for comparison
     result = await query_omada_identity(
         firstname="Emma",
         firstname_operator="eq",
-        top=3
+        top=3,
+        select_fields="Id,FIRSTNAME"
     )
-    display_filtered_result(result, "Test 7: Equals Operator (firstname eq 'Emma') - Reference working test")
+    display_filtered_result(result, "Test 6: Equals Operator (firstname eq 'Emma') - Reference working test", ['Id', 'FIRSTNAME'])
 
 async def main():
     await test_firstname_not_equals()

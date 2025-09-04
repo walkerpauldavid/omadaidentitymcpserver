@@ -58,6 +58,22 @@ def display_resource_assignment_result(result_json, test_name):
         print("=" * 60)
         print(f"Error processing result: {repr(e)}")
 
+def print_resourceassignments_count_result(result_json, test_name, object_type):
+    """Print resource assignments count result with object count and type information."""
+    try:
+        data = json.loads(result_json)
+        if data.get("status") == "success":
+            count = data.get("count", 0)
+            print(f"{test_name}: [SUCCESS] Success - Found {count} {object_type} objects")
+        else:
+            print(f"{test_name}: [FAILED] Failed")
+            display_resource_assignment_result(result_json, test_name)
+    except (json.JSONDecodeError, AttributeError):
+        if "Error" not in str(result_json) and "[FAILED]" not in str(result_json):
+            print(f"{test_name}: [SUCCESS] Success (HTTP 200)")
+        else:
+            print(f"{test_name}: [FAILED] Failed")
+
 async def test_resourceassignments_count():
     """Test getting total count of resource assignments"""
     result = await query_omada_entity(
@@ -65,7 +81,7 @@ async def test_resourceassignments_count():
         count_only=True,
         include_count=True
     )
-    display_resource_assignment_result(result, "Test 1: Count All Resource Assignments")
+    print_resourceassignments_count_result(result, "Test 1: Count All Resource Assignments", "Resource Assignment")
 
 async def test_resourceassignments_sample():
     """Test getting a sample of resource assignments"""

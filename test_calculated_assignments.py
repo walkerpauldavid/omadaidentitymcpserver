@@ -64,6 +64,31 @@ def display_assignments_result(result_json, test_name):
         print("=" * 70)
         print(f"Error: {repr(e)}")
 
+def print_assignments_count_result(result_json, test_name, object_type):
+    """Print calculated assignments count result with object count and type information."""
+    try:
+        data = json.loads(result_json)
+        if data.get("status") == "success":
+            count = data.get("count", 0)
+            print(f"{test_name}: [SUCCESS] Success - Found {count} {object_type} objects")
+        else:
+            print(f"{test_name}: [FAILED] Failed")
+            display_assignments_result(result_json, test_name)
+    except (json.JSONDecodeError, AttributeError):
+        if "Error" not in str(result_json) and "[FAILED]" not in str(result_json):
+            print(f"{test_name}: [SUCCESS] Success (HTTP 200)")
+        else:
+            print(f"{test_name}: [FAILED] Failed")
+
+async def test_count_all_calculated_assignments():
+    """Count all calculated assignments in Omada system"""
+    result = await query_omada_entity(
+        entity_type="CalculatedAssignments",
+        count_only=True,
+        include_count=True
+    )
+    print_assignments_count_result(result, "Test 1: Count All Calculated Assignments", "Calculated Assignment")
+
 async def test_calculated_assignments_wrapper():
     """Test the query_calculated_assignments wrapper function"""
     result = await query_calculated_assignments(
@@ -71,7 +96,7 @@ async def test_calculated_assignments_wrapper():
         top=5,
         include_count=True
     )
-    display_assignments_result(result, "Test 1: Calculated Assignments via Wrapper Function")
+    display_assignments_result(result, "Test 2: Calculated Assignments via Wrapper Function")
 
 async def test_calculated_assignments_generic():
     """Test calculated assignments using generic function"""
@@ -83,7 +108,7 @@ async def test_calculated_assignments_generic():
         top=5,
         include_count=True
     )
-    display_assignments_result(result, "Test 2: Calculated Assignments via Generic Function")
+    display_assignments_result(result, "Test 3: Calculated Assignments via Generic Function")
 
 async def test_calculated_assignments_custom_select():
     """Test with custom select fields"""
@@ -93,7 +118,7 @@ async def test_calculated_assignments_custom_select():
         expand="Identity,Resource",
         top=3
     )
-    display_assignments_result(result, "Test 3: Custom Select Fields (AssignmentKey,AccountName,Status)")
+    display_assignments_result(result, "Test 4: Custom Select Fields (AssignmentKey,AccountName,Status)")
 
 async def test_calculated_assignments_no_expand():
     """Test without expand to see basic structure"""
@@ -102,7 +127,7 @@ async def test_calculated_assignments_no_expand():
         expand="",  # No expand
         top=3
     )
-    display_assignments_result(result, "Test 4: No Expand - Basic Assignment Data Only")
+    display_assignments_result(result, "Test 5: No Expand - Basic Assignment Data Only")
 
 async def test_calculated_assignments_different_identity():
     """Test with different identity ID"""
@@ -111,7 +136,7 @@ async def test_calculated_assignments_different_identity():
         top=5,
         include_count=True
     )
-    display_assignments_result(result, "Test 5: Assignments for Identity 1006715 (Emma Taylor)")
+    display_assignments_result(result, "Test 6: Assignments for Identity 1006715 (Emma Taylor)")
 
 async def test_calculated_assignments_custom_filter():
     """Test with custom filter condition"""
@@ -122,7 +147,7 @@ async def test_calculated_assignments_custom_filter():
         expand="Identity,Resource,ResourceType",
         top=3
     )
-    display_assignments_result(result, "Test 6: Custom Filter (Identity/Id eq 1006500)")
+    display_assignments_result(result, "Test 7: Custom Filter (Identity/Id eq 1006500)")
 
 async def test_endpoint_structure():
     """Test to show the endpoint structure"""
@@ -133,7 +158,7 @@ async def test_endpoint_structure():
     
     try:
         data = json.loads(result)
-        print("\n\nTest 7: Endpoint Structure Analysis")
+        print("\n\nTest 8: Endpoint Structure Analysis")
         print("=" * 70)
         print(f"Endpoint URL Pattern: {data.get('endpoint', 'N/A')}")
         print("Expected URL Components:")
@@ -162,6 +187,7 @@ async def main():
     print("Testing the new CalculatedAssignments functionality")
     print("Endpoint: /OData/BuiltIn/CalculatedAssignments")
     
+    await test_count_all_calculated_assignments()
     await test_calculated_assignments_wrapper()
     await test_calculated_assignments_generic()
     await test_calculated_assignments_custom_select()

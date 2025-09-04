@@ -45,6 +45,31 @@ def display_result(result_json, test_name):
         print("=" * 60)
         print(f"Error: {repr(e)}")
 
+def print_resources_count_result(result_json, test_name, object_type):
+    """Print resources count result with object count and type information."""
+    try:
+        data = json.loads(result_json)
+        if data.get("status") == "success":
+            count = data.get("count", 0)
+            print(f"{test_name}: [SUCCESS] Success - Found {count} {object_type} objects")
+        else:
+            print(f"{test_name}: [FAILED] Failed")
+            display_result(result_json, test_name)
+    except (json.JSONDecodeError, AttributeError):
+        if "Error" not in str(result_json) and "[FAILED]" not in str(result_json):
+            print(f"{test_name}: [SUCCESS] Success (HTTP 200)")
+        else:
+            print(f"{test_name}: [FAILED] Failed")
+
+async def test_count_all_resources():
+    """Count all resources in Omada system"""
+    result = await query_omada_entity(
+        entity_type="Resource",
+        count_only=True,
+        include_count=True
+    )
+    print_resources_count_result(result, "Test 1: Count All Resources", "Resource")
+
 async def test_resources_by_system_wrapper():
     """Test querying resources by system using the wrapper function"""
     result = await query_omada_resources(
@@ -52,7 +77,7 @@ async def test_resources_by_system_wrapper():
         top=5,
         include_count=True
     )
-    display_result(result, "Test 1: Resources for System 1011066 (via wrapper)")
+    display_result(result, "Test 2: Resources for System 1011066 (via wrapper)")
 
 async def test_resources_by_system_direct():
     """Test querying resources by system using the generic function"""
@@ -62,7 +87,7 @@ async def test_resources_by_system_direct():
         top=5,
         include_count=True
     )
-    display_result(result, "Test 2: Resources for System 1011066 (via generic function)")
+    display_result(result, "Test 3: Resources for System 1011066 (via generic function)")
 
 async def test_resources_by_system_custom_filter():
     """Test querying resources by system using custom filter"""
@@ -72,7 +97,7 @@ async def test_resources_by_system_custom_filter():
         top=5,
         include_count=True
     )
-    display_result(result, "Test 3: Resources for System 1011066 (via custom filter)")
+    display_result(result, "Test 4: Resources for System 1011066 (via custom filter)")
 
 async def test_combined_system_and_type():
     """Test querying resources by both system and resource type"""
@@ -82,7 +107,7 @@ async def test_combined_system_and_type():
         top=5,
         include_count=True
     )
-    display_result(result, "Test 4: Application Roles for System 1011066 (combined filters)")
+    display_result(result, "Test 5: Application Roles for System 1011066 (combined filters)")
 
 async def test_different_system():
     """Test querying resources for a different system"""
@@ -92,12 +117,13 @@ async def test_different_system():
         top=5,
         include_count=True
     )
-    display_result(result, "Test 5: Resources for System 1001361 (Omada Identity System)")
+    display_result(result, "Test 6: Resources for System 1001361 (Omada Identity System)")
 
 async def main():
     print("=== TESTING SYSTEM-BASED RESOURCE QUERIES ===")
     print("Testing the new system_id parameter functionality")
     
+    await test_count_all_resources()
     await test_resources_by_system_wrapper()
     await test_resources_by_system_direct()
     await test_resources_by_system_custom_filter()
