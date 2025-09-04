@@ -1,0 +1,2 @@
+# Quick one-liner to kill Claude Desktop processes
+Get-Process | Where-Object { $_.ProcessName -match "claude" -or $_.MainWindowTitle -match "claude" } | Stop-Process -Force; Write-Host "Claude Desktop processes killed. You can now restart Claude Desktop." -ForegroundColor Green

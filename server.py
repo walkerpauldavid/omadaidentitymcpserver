@@ -166,12 +166,11 @@ async def get_cached_token(scope: str = None) -> Dict[str, Any]:
 
 @mcp.tool()
 async def query_omada_entity(entity_type: str = "Identity",
-                            firstname: str = None, 
-                            lastname: str = None,
-                            firstname_operator: str = "eq",
-                            lastname_operator: str = "eq",
+                            field_filters: list = None,
                             resource_type_id: int = None,
                             resource_type_name: str = None,
+                            system_id: int = None,
+                            identity_id: int = None,
                             omada_base_url: str = None,
                             scope: str = None,
                             filter_condition: str = None,
@@ -180,18 +179,25 @@ async def query_omada_entity(entity_type: str = "Identity",
                             skip: int = None,
                             select_fields: str = None,
                             order_by: str = None,
-                            include_count: bool = False) -> str:
+                            expand: str = None,
+                            include_count: bool = False,
+                            # Deprecated parameters - kept for backward compatibility
+                            firstname: str = None, 
+                            lastname: str = None,
+                            firstname_operator: str = "eq",
+                            lastname_operator: str = "eq") -> str:
     """
     Generic query function for any Omada entity type (Identity, Resource, Role, etc).
     
     Args:
         entity_type: Type of entity to query (Identity, Resource, Role, Account, etc)
-        firstname: First name to search for (Identity entities only)
-        lastname: Last name to search for (Identity entities only)
-        firstname_operator: OData operator for firstname (eq, ne, startswith, endswith, contains, etc)
-        lastname_operator: OData operator for lastname (eq, ne, startswith, endswith, contains, etc)
+        field_filters: List of field filters, each containing:
+                      [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
+                       {"field": "LASTNAME", "value": "Taylor", "operator": "startswith"}]
         resource_type_id: Numeric ID for resource type (Resource entities only, e.g., 1011066)
         resource_type_name: Name-based lookup for resource type (Resource entities only, e.g., "APPLICATION_ROLES")
+        system_id: Numeric ID for system reference (Resource entities only, e.g., 1011066 for Systemref/Id eq 1011066)
+        identity_id: Numeric ID for identity reference (CalculatedAssignments only, e.g., 1006500 for Identity/Id eq 1006500)
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
         filter_condition: Custom OData filter condition
@@ -204,6 +210,7 @@ async def query_omada_entity(entity_type: str = "Identity",
         skip: Number of records to skip (OData $skip)
         select_fields: Comma-separated list of fields to select (OData $select)
         order_by: Field(s) to order by (OData $orderby)
+        expand: Comma-separated list of related entities to expand (OData $expand, e.g., "Identity,Resource,ResourceType")
         include_count: Include total count in response (adds $count=true)
         
     Returns:
@@ -211,7 +218,7 @@ async def query_omada_entity(entity_type: str = "Identity",
     """
     try:
         # Validate entity type
-        valid_entities = ["Identity", "Resource", "Role", "Account", "Application", "RESOURCEASSIGNMENT", "System"]
+        valid_entities = ["Identity", "Resource", "Role", "Account", "Application", "System", "CalculatedAssignments"]
         if entity_type not in valid_entities:
             return f"❌ Invalid entity type '{entity_type}'. Valid types: {', '.join(valid_entities)}"
         
@@ -231,8 +238,11 @@ async def query_omada_entity(entity_type: str = "Identity",
         # Remove trailing slash if present
         omada_base_url = omada_base_url.rstrip('/')
         
-        # Build the endpoint URL
-        endpoint_url = f"{omada_base_url}/OData/DataObjects/{entity_type}"
+        # Build the endpoint URL based on entity type
+        if entity_type == "CalculatedAssignments":
+            endpoint_url = f"{omada_base_url}/OData/BuiltIn/{entity_type}"
+        else:
+            endpoint_url = f"{omada_base_url}/OData/DataObjects/{entity_type}"
         
         # Build query parameters
         query_params = {}
@@ -240,7 +250,7 @@ async def query_omada_entity(entity_type: str = "Identity",
         # Handle entity-specific filtering logic
         auto_filters = []
         
-        # For Resource entities, handle resource_type filtering
+        # For Resource entities, handle resource_type and system filtering
         if entity_type == "Resource":
             if resource_type_name and not resource_type_id:
                 env_key = f"RESOURCE_TYPE_{resource_type_name.upper()}"
@@ -251,13 +261,31 @@ async def query_omada_entity(entity_type: str = "Identity",
             
             if resource_type_id:
                 auto_filters.append(f"Systemref/Id eq {resource_type_id}")
+            
+            # Add system_id filter for querying resources by system (only if not already filtered by resource_type_id)
+            if system_id and not resource_type_id:
+                auto_filters.append(f"Systemref/Id eq {system_id}")
         
-        # For Identity entities, handle firstname/lastname filtering
+        # Handle generic field filtering for any entity type
+        if field_filters:
+            for field_filter in field_filters:
+                if isinstance(field_filter, dict) and "field" in field_filter and "value" in field_filter:
+                    field_name = field_filter["field"]
+                    field_value = field_filter["value"]
+                    field_operator = field_filter.get("operator", "eq")
+                    auto_filters.append(_build_odata_filter(field_name, field_value, field_operator))
+        
+        # For Identity entities, handle deprecated firstname/lastname filtering (backward compatibility)
         elif entity_type == "Identity":
             if firstname:
                 auto_filters.append(_build_odata_filter("FIRSTNAME", firstname, firstname_operator))
             if lastname:
                 auto_filters.append(_build_odata_filter("LASTNAME", lastname, lastname_operator))
+        
+        # For CalculatedAssignments entities, handle identity_id filtering
+        elif entity_type == "CalculatedAssignments":
+            if identity_id:
+                auto_filters.append(f"Identity/Id eq {identity_id}")
         
         # Combine automatic filters with custom filter condition
         all_filters = []
@@ -283,6 +311,8 @@ async def query_omada_entity(entity_type: str = "Identity",
                 query_params['$select'] = select_fields
             if order_by:
                 query_params['$orderby'] = order_by
+            if expand:
+                query_params['$expand'] = expand
             if include_count:
                 query_params['$count'] = 'true'
         
@@ -417,6 +447,7 @@ async def query_omada_identity(firstname: str = None, lastname: str = None,
 @mcp.tool()
 async def query_omada_resources(resource_type_id: int = None,
                                resource_type_name: str = None,
+                               system_id: int = None,
                                omada_base_url: str = None,
                                scope: str = None,
                                filter_condition: str = None,
@@ -432,6 +463,7 @@ async def query_omada_resources(resource_type_id: int = None,
     Args:
         resource_type_id: Numeric ID for resource type (e.g., 1011066 for Application Roles)
         resource_type_name: Name-based lookup for resource type (e.g., "APPLICATION_ROLES")
+        system_id: Numeric ID for system reference to filter resources by system (e.g., 1011066)
         omada_base_url: Omada instance URL
         scope: OAuth2 scope for the token
         filter_condition: Custom OData filter condition
@@ -449,6 +481,7 @@ async def query_omada_resources(resource_type_id: int = None,
         entity_type="Resource",
         resource_type_id=resource_type_id,
         resource_type_name=resource_type_name,
+        system_id=system_id,
         omada_base_url=omada_base_url,
         scope=scope,
         filter_condition=filter_condition,
@@ -457,6 +490,99 @@ async def query_omada_resources(resource_type_id: int = None,
         skip=skip,
         select_fields=select_fields,
         order_by=order_by,
+        include_count=include_count
+    )
+
+@mcp.tool()
+async def query_omada_entities(entity_type: str = "Identity",
+                              field_filters: list = None,
+                              omada_base_url: str = None,
+                              scope: str = None,
+                              filter_condition: str = None,
+                              count_only: bool = False,
+                              top: int = None,
+                              skip: int = None,
+                              select_fields: str = None,
+                              order_by: str = None,
+                              expand: str = None,
+                              include_count: bool = False) -> str:
+    """
+    Modern generic query function for Omada entities using field filters.
+    
+    Args:
+        entity_type: Type of entity to query (Identity, Resource, System, etc)
+        field_filters: List of field filters:
+                      [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
+                       {"field": "LASTNAME", "value": "Taylor", "operator": "startswith"}]
+        omada_base_url: Omada instance URL
+        scope: OAuth2 scope for the token
+        filter_condition: Custom OData filter condition
+        count_only: If True, returns only the count
+        top: Maximum number of records to return
+        skip: Number of records to skip
+        select_fields: Comma-separated list of fields to select
+        order_by: Field(s) to order by
+        expand: Comma-separated list of related entities to expand
+        include_count: Include total count in response
+        
+    Returns:
+        JSON response with entity data or error message
+    """
+    return await query_omada_entity(
+        entity_type=entity_type,
+        field_filters=field_filters,
+        omada_base_url=omada_base_url,
+        scope=scope,
+        filter_condition=filter_condition,
+        count_only=count_only,
+        top=top,
+        skip=skip,
+        select_fields=select_fields,
+        order_by=order_by,
+        expand=expand,
+        include_count=include_count
+    )
+
+@mcp.tool()
+async def query_calculated_assignments(identity_id: int = None,
+                                      select_fields: str = "AssignmentKey,AccountName",
+                                      expand: str = "Identity,Resource,ResourceType",
+                                      omada_base_url: str = None,
+                                      scope: str = None,
+                                      filter_condition: str = None,
+                                      top: int = None,
+                                      skip: int = None,
+                                      order_by: str = None,
+                                      include_count: bool = False) -> str:
+    """
+    Query Omada CalculatedAssignments entities (wrapper for query_omada_entity).
+    
+    Args:
+        identity_id: Numeric ID for identity to get assignments for (e.g., 1006500)
+        select_fields: Fields to select (default: "AssignmentKey,AccountName")
+        expand: Related entities to expand (default: "Identity,Resource,ResourceType")
+        omada_base_url: Omada instance URL
+        scope: OAuth2 scope for the token
+        filter_condition: Custom OData filter condition
+        top: Maximum number of records to return
+        skip: Number of records to skip
+        order_by: Field(s) to order by
+        include_count: Include total count in response
+        
+    Returns:
+        JSON response with calculated assignments data or error message
+    """
+    return await query_omada_entity(
+        entity_type="CalculatedAssignments",
+        identity_id=identity_id,
+        omada_base_url=omada_base_url,
+        scope=scope,
+        filter_condition=filter_condition,
+        top=top,
+        skip=skip,
+        select_fields=select_fields,
+        order_by=order_by,
+        expand=expand,
         include_count=include_count
     )
 
