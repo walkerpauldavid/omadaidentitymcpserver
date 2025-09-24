@@ -219,14 +219,9 @@ async def get_cached_token(scope: str = None) -> Dict[str, Any]:
 
 @mcp.tool()
 async def query_omada_entity(entity_type: str = "Identity",
-                            field_filters: list = None,
-                            resource_type_id: int = None,
-                            resource_type_name: str = None,
-                            system_id: int = None,
-                            identity_id: int = None,
+                            filters: dict = None,
                             omada_base_url: str = None,
                             scope: str = None,
-                            filter_condition: str = None,
                             count_only: bool = False,
                             summary_mode: bool = False,
                             top: int = None,
@@ -237,32 +232,58 @@ async def query_omada_entity(entity_type: str = "Identity",
                             include_count: bool = False) -> str:
     """
     Generic query function for any Omada entity type (Identity, Resource, Role, etc).
-    
+
     Args:
         entity_type: Type of entity to query (Identity, Resource, Role, Account, etc)
-        field_filters: List of field filters, each containing:
-                      [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
-                       {"field": "LASTNAME", "value": "Taylor", "operator": "startswith"}]
-        resource_type_id: Numeric ID for resource type (Resource entities only, e.g., 1011066)
-        resource_type_name: Name-based lookup for resource type (Resource entities only, e.g., "APPLICATION_ROLES")
-        system_id: Numeric ID for system reference (Resource entities only, e.g., 1011066 for Systemref/Id eq 1011066)
-        identity_id: Numeric ID for identity reference (CalculatedAssignments only, e.g., 1006500 for Identity/Id eq 1006500)
+        filters: Dictionary containing filter criteria:
+                {
+                    "field_filters": [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"}],
+                    "resource_type_id": 1011066,  # For Resource entities
+                    "resource_type_name": "APPLICATION_ROLES",  # Alternative to resource_type_id
+                    "system_id": 1011066,  # For Resource entities
+                    "identity_id": 1006500,  # For CalculatedAssignments entities
+                    "custom_filter": "FIRSTNAME eq 'John' and LASTNAME eq 'Doe'"  # Custom OData filter
+                }
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
-        filter_condition: Custom OData filter condition
-                         Examples:
-                         - "FIRSTNAME eq 'John' and LASTNAME eq 'Doe'" (Identity)
-                         - "contains(DISPLAYNAME, 'Manager')" (Any entity)
-                         - "Systemref/Id eq 1011066" (Resource)
         count_only: If True, returns only the count of matching records
         summary_mode: If True, returns only key fields as a summary instead of full objects
         top: Maximum number of records to return (OData $top)
         skip: Number of records to skip (OData $skip)
         select_fields: Comma-separated list of fields to select (OData $select)
         order_by: Field(s) to order by (OData $orderby)
-        expand: Comma-separated list of related entities to expand (OData $expand, e.g., "Identity,Resource,ResourceType")
+        expand: Comma-separated list of related entities to expand (OData $expand)
         include_count: Include total count in response (adds $count=true)
-        
+
+    Examples:
+        # Simple field filter
+        await query_omada_entity("Identity", filters={
+            "field_filters": [{"field": "FIRSTNAME", "value": "John", "operator": "eq"}]
+        })
+
+        # Resource filtering
+        await query_omada_entity("Resource", filters={
+            "resource_type_id": 123,
+            "system_id": 456
+        })
+
+        # Multiple filters combined
+        await query_omada_entity("Identity", filters={
+            "field_filters": [{"field": "DEPT", "value": "IT", "operator": "eq"}],
+            "custom_filter": "STATUS eq 'ACTIVE'"
+        })
+
+        # CalculatedAssignments for specific identity
+        await query_omada_entity("CalculatedAssignments", filters={
+            "identity_id": 1006500
+        })
+
+        # Count only with custom filter
+        await query_omada_entity("Identity",
+            filters={"custom_filter": "DEPARTMENT eq 'Engineering'"},
+            count_only=True
+        )
+
     Returns:
         JSON response with entity data, count, or error message
     """
@@ -291,9 +312,21 @@ async def query_omada_entity(entity_type: str = "Identity",
         # Build query parameters
         query_params = {}
         
+        # Initialize filters dictionary if not provided
+        if filters is None:
+            filters = {}
+
+        # Extract filter components from the filters dictionary
+        field_filters = filters.get("field_filters", [])
+        resource_type_id = filters.get("resource_type_id")
+        resource_type_name = filters.get("resource_type_name")
+        system_id = filters.get("system_id")
+        identity_id = filters.get("identity_id")
+        custom_filter = filters.get("custom_filter")
+
         # Handle entity-specific filtering logic
         auto_filters = []
-        
+
         # For Resource entities, handle resource_type and system filtering
         if entity_type == "Resource":
             if resource_type_name and not resource_type_id:
@@ -302,14 +335,14 @@ async def query_omada_entity(entity_type: str = "Identity",
                 if not resource_type_id:
                     return f"❌ Resource type '{resource_type_name}' not found in environment variables. Check {env_key}"
                 resource_type_id = int(resource_type_id)
-            
+
             if resource_type_id:
                 auto_filters.append(f"Systemref/Id eq {resource_type_id}")
-            
+
             # Add system_id filter for querying resources by system (only if not already filtered by resource_type_id)
             if system_id and not resource_type_id:
                 auto_filters.append(f"Systemref/Id eq {system_id}")
-        
+
         # Handle generic field filtering for any entity type
         if field_filters:
             for field_filter in field_filters:
@@ -318,18 +351,18 @@ async def query_omada_entity(entity_type: str = "Identity",
                     field_value = field_filter["value"]
                     field_operator = field_filter.get("operator", "eq")
                     auto_filters.append(_build_odata_filter(field_name, field_value, field_operator))
-        
+
         # For CalculatedAssignments entities, handle identity_id filtering
         if entity_type == "CalculatedAssignments":
             if identity_id:
                 auto_filters.append(f"Identity/Id eq {identity_id}")
-        
+
         # Combine automatic filters with custom filter condition
         all_filters = []
         if auto_filters:
             all_filters.extend(auto_filters)
-        if filter_condition:
-            all_filters.append(f"({filter_condition})")
+        if custom_filter:
+            all_filters.append(f"({custom_filter})")
         
         if all_filters:
             query_params['$filter'] = " and ".join(all_filters)
@@ -468,12 +501,18 @@ async def query_omada_identity(field_filters: list = None,
     Returns:
         JSON response with identity data or error message
     """
+    # Build filters dictionary for clean API
+    filters = {}
+    if field_filters:
+        filters["field_filters"] = field_filters
+    if filter_condition:
+        filters["custom_filter"] = filter_condition
+
     return await query_omada_entity(
         entity_type="Identity",
-        field_filters=field_filters,
+        filters=filters if filters else None,
         omada_base_url=omada_base_url,
         scope=scope,
-        filter_condition=filter_condition,
         count_only=count_only,
         summary_mode=summary_mode,
         top=top,
@@ -516,14 +555,22 @@ async def query_omada_resources(resource_type_id: int = None,
     Returns:
         JSON response with resource data or error message
     """
+    # Build filters dictionary for clean API
+    filters = {}
+    if resource_type_id:
+        filters["resource_type_id"] = resource_type_id
+    if resource_type_name:
+        filters["resource_type_name"] = resource_type_name
+    if system_id:
+        filters["system_id"] = system_id
+    if filter_condition:
+        filters["custom_filter"] = filter_condition
+
     return await query_omada_entity(
         entity_type="Resource",
-        resource_type_id=resource_type_id,
-        resource_type_name=resource_type_name,
-        system_id=system_id,
+        filters=filters if filters else None,
         omada_base_url=omada_base_url,
         scope=scope,
-        filter_condition=filter_condition,
         count_only=count_only,
         top=top,
         skip=skip,
@@ -567,12 +614,18 @@ async def query_omada_entities(entity_type: str = "Identity",
     Returns:
         JSON response with entity data or error message
     """
+    # Build filters dictionary for clean API
+    filters = {}
+    if field_filters:
+        filters["field_filters"] = field_filters
+    if filter_condition:
+        filters["custom_filter"] = filter_condition
+
     return await query_omada_entity(
         entity_type=entity_type,
-        field_filters=field_filters,
+        filters=filters if filters else None,
         omada_base_url=omada_base_url,
         scope=scope,
-        filter_condition=filter_condition,
         count_only=count_only,
         top=top,
         skip=skip,
@@ -611,12 +664,18 @@ async def query_calculated_assignments(identity_id: int = None,
     Returns:
         JSON response with calculated assignments data or error message
     """
+    # Build filters dictionary for clean API
+    filters = {}
+    if identity_id:
+        filters["identity_id"] = identity_id
+    if filter_condition:
+        filters["custom_filter"] = filter_condition
+
     return await query_omada_entity(
         entity_type="CalculatedAssignments",
-        identity_id=identity_id,
+        filters=filters if filters else None,
         omada_base_url=omada_base_url,
         scope=scope,
-        filter_condition=filter_condition,
         top=top,
         skip=skip,
         select_fields=select_fields,
