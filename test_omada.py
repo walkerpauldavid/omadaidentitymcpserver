@@ -322,9 +322,74 @@ async def run_system_tests():
     else:
         print("\nSystem tests not available (test_system.py not found)")
 
-async def run_calculated_assignments_tests():
+async def test_identity_calculated_assignments(identity_id: int):
+    """Test calculated assignments for a specific identity ID."""
+    print(f"\n=== TESTING CALCULATED ASSIGNMENTS FOR IDENTITY {identity_id} ===")
+    try:
+        from server import query_calculated_assignments
+        result = await query_calculated_assignments(
+            identity_id=identity_id,
+            select_fields="AssignmentKey,AccountName,Reasons",
+            expand="Identity,Resource,ResourceType",
+            top=20,
+            include_count=True
+        )
+        
+        # Custom display for calculated assignments with reasons
+        if show_output:
+            print(f"Calculated Assignments Result:", result)
+        else:
+            try:
+                parsed = json.loads(result)
+                if parsed.get("status") == "success":
+                    count = parsed.get("entities_returned", 0)
+                    print(f"Calculated Assignments: [SUCCESS] Success - Found {count} assignments")
+                    
+                    if 'data' in parsed and 'value' in parsed['data']:
+                        for i, assignment in enumerate(parsed['data']['value'], 1):
+                            assignment_key = assignment.get('AssignmentKey', 'N/A')
+                            account_name = assignment.get('AccountName', 'N/A')
+                            
+                            # Get identity info
+                            identity_info = assignment.get('Identity', {})
+                            identity_name = identity_info.get('DisplayName', 'N/A')
+                            
+                            # Get resource info  
+                            resource_info = assignment.get('Resource', {})
+                            resource_name = resource_info.get('DisplayName', 'N/A')
+                            
+                            # Get resource type info
+                            resource_type_info = assignment.get('ResourceType', {})
+                            resource_type_name = resource_type_info.get('DisplayName', 'N/A')
+                            
+                            # Get reasons
+                            reasons = assignment.get('Reasons', [])
+                            reason_text = "No reasons specified"
+                            if reasons:
+                                reason_descriptions = [r.get('Description', 'Unknown') for r in reasons]
+                                reason_text = " | ".join(reason_descriptions)
+                            
+                            print(f"  {i}. Assignment: {assignment_key}")
+                            print(f"     Identity: {identity_name} (ID: {identity_id})")
+                            print(f"     Account: {account_name}")
+                            print(f"     Resource: {resource_name}")
+                            print(f"     Resource Type: {resource_type_name}")
+                            print(f"     Reason: {reason_text}")
+                            print()
+                else:
+                    print(f"Calculated Assignments: [FAILED] Failed")
+            except (json.JSONDecodeError, AttributeError) as e:
+                print(f"Calculated Assignments: [FAILED] Failed - Parse error: {str(e)}")
+                
+    except Exception as e:
+        print(f"Calculated Assignments Error: {str(e)}")
+        print("Calculated Assignments: [FAILED] Failed")
+
+async def run_calculated_assignments_tests(identity_id=None):
     """Run calculated assignments tests if available"""
-    if test_calculated_assignments_main:
+    if identity_id:
+        await test_identity_calculated_assignments(identity_id)
+    elif test_calculated_assignments_main:
         print("\n" + "=" * 60)
         print("RUNNING CALCULATED ASSIGNMENTS TESTS")
         print("=" * 60)
@@ -383,6 +448,7 @@ if __name__ == "__main__":
                        help='Show full JSON output (default: False, shows only status)')
     parser.add_argument('--testsuite', choices=['all', 'core', 'operators', 'resourceassignments', 'system', 'calculated', 'errors'],
                        default='all', help='Select which test suite to run (default: all)')
+    parser.add_argument('--identity-id', type=int, help='Identity ID for calculated assignments (required for --testsuite calculated)')
     
     args = parser.parse_args()
     show_output = args.showOutput
@@ -407,7 +473,10 @@ if __name__ == "__main__":
     elif args.testsuite == 'system':
         asyncio.run(run_system_tests())
     elif args.testsuite == 'calculated':
-        asyncio.run(run_calculated_assignments_tests())
+        if not args.identity_id:
+            print("Error: --identity-id parameter is required when using --testsuite calculated")
+            sys.exit(1)
+        asyncio.run(run_calculated_assignments_tests(args.identity_id))
     elif args.testsuite == 'errors':
         asyncio.run(run_errors_tests())
     else:  # 'all' or default
