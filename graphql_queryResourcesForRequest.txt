@@ -1,0 +1,17 @@
+query MyQuery($beneficiaryIds: [ID!] = "e3e869c4-369a-476e-a969-d57059d0b1e4") {
+  accessRequestComponents {
+    resources(
+      filters: {beneficiaryIds: $beneficiaryIds, systemId: "1c2768e9-86fd-43fd-9e0d-5c8fee21b59b", contextId: "6dd03400-ddb5-4cc4-bfff-490d94b195a9"}
+    ) {
+      data {
+        name
+        id
+        description
+        system {
+          name
+          id
+        }
+      }
+    }
+  }
+}

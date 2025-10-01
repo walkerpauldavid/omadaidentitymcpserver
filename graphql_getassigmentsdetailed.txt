@@ -1,0 +1,61 @@
+query MyQuery {
+  calculatedAssignments(
+    filters: {resourceTypeName: {filterValue: "Active Directory - Security Group", operator: EQUALS}, complianceStatus: {filterValue: "NOT APPROVED", operator: EQUALS}, identityIds: "5da7f8fc-0119-46b0-a6b4-06e5c78edf68"}
+  ) {
+    pages
+    total
+    data {
+      id
+      complianceStatus
+      disabled
+      validFrom
+      validTo
+      violations {
+        description
+        violationStatus
+      }
+      account {
+        accountName
+        accountType {
+          name
+          id
+        }
+        system {
+          name
+          id
+        }
+      }
+      identity {
+        identityId
+        lastName
+        firstName
+        id
+        accounts {
+          accountName
+          system {
+            name
+            id
+          }
+        }
+      }
+      resource {
+        name
+        id
+        description
+        system {
+          id
+          name
+        }
+        resourceType {
+          id
+          name
+        }
+      }
+      reason {
+        description
+        reasonType
+        causeObjectKey
+      }
+    }
+  }
+}

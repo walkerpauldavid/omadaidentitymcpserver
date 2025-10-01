@@ -4,11 +4,13 @@ REM Test Azure OAuth2 token request using curl
 echo Testing Azure OAuth2 token request...
 echo.
 
-REM Read values from .env file (you may need to adjust these)
-set TENANT_ID=542395eb-b6df-4617-af35-11deb659df7b
-set CLIENT_ID=08eeb6a4-4aee-406f-baa5-4922993f09f3
-set CLIENT_SECRET=2Dv8Q~W9U.k7hQN.4TBPiAzxlOLZM8ZY1JSFtaXO
-set OAUTH2_SCOPE=api://08eeb6a4-4aee-406f-baa5-4922993f09f3/.default
+REM Read values from .env file
+for /f "tokens=1,2 delims==" %%a in (.env) do (
+    if "%%a"=="TENANT_ID" set TENANT_ID=%%b
+    if "%%a"=="CLIENT_ID" set CLIENT_ID=%%b
+    if "%%a"=="CLIENT_SECRET" set CLIENT_SECRET=%%b
+    if "%%a"=="OAUTH2_SCOPE" set OAUTH2_SCOPE=%%b
+)
 
 set TOKEN_URL=https://login.microsoftonline.com/%TENANT_ID%/oauth2/v2.0/token
 

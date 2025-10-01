@@ -1,8 +1,9 @@
 query MyQuery {
-  accessRequest {
+  accessRequestComponents {
     contexts(identityIds: "e3e869c4-369a-476e-a969-d57059d0b1e4") {
-      name
       id
+      displayName
+      type
     }
   }
 }

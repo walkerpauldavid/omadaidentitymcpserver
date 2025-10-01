@@ -8,9 +8,85 @@ import asyncio
 from datetime import datetime, timedelta
 import json
 import urllib.parse
+import logging
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging system
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def get_function_log_level(function_name: str) -> int:
+    """
+    Get the log level for a specific function, falling back to global LOG_LEVEL.
+
+    Args:
+        function_name: Name of the function to get log level for
+
+    Returns:
+        logging level constant (e.g., logging.DEBUG, logging.INFO)
+    """
+    # Try function-specific log level first
+    func_log_level = os.getenv(f"LOG_LEVEL_{function_name}", "").upper()
+
+    # If not set, use global LOG_LEVEL
+    if not func_log_level:
+        func_log_level = LOG_LEVEL
+
+    # Convert string to logging level, default to INFO if invalid
+    return getattr(logging, func_log_level, logging.INFO)
+
+def set_function_logger_level(function_name: str) -> int:
+    """
+    Set the logger level for a specific function and return the old level.
+
+    Args:
+        function_name: Name of the function
+
+    Returns:
+        Previous logger level for restoration
+    """
+    old_level = logger.level
+    new_level = get_function_log_level(function_name)
+    logger.setLevel(new_level)
+
+    # Log the level change if it's different (only at DEBUG level to avoid noise)
+    if old_level != new_level and new_level <= logging.DEBUG:
+        logger.debug(f"Function '{function_name}' using log level: {logging.getLevelName(new_level)}")
+
+    return old_level
+
+def with_function_logging(func):
+    """
+    Decorator to automatically set function-specific logging level.
+
+    Usage:
+        @with_function_logging
+        @mcp.tool()
+        async def my_function():
+            pass
+    """
+    if asyncio.iscoroutinefunction(func):
+        async def async_wrapper(*args, **kwargs):
+            old_level = set_function_logger_level(func.__name__)
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                logger.setLevel(old_level)
+        return async_wrapper
+    else:
+        def sync_wrapper(*args, **kwargs):
+            old_level = set_function_logger_level(func.__name__)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                logger.setLevel(old_level)
+        return sync_wrapper
 
 # Custom Exception Classes
 class OmadaServerError(Exception):
@@ -193,7 +269,7 @@ _cached_token = None
 try:
     oauth_client = AzureOAuth2Client()
 except ValueError as e:
-    print(f"Warning: OAuth2 client initialization failed: {e}")
+    logger.warning(f"OAuth2 client initialization failed: {e}")
     oauth_client = None
 
 async def get_cached_token(scope: str = None) -> Dict[str, Any]:
@@ -469,6 +545,7 @@ async def query_omada_entity(entity_type: str = "Identity",
     except Exception as e:
         return f"❌ Unexpected Error: {str(e)}"
 
+@with_function_logging
 @mcp.tool()
 async def query_omada_identity(field_filters: list = None,
                               omada_base_url: str = None,
@@ -687,7 +764,7 @@ async def query_calculated_assignments(identity_id: int = None,
 @mcp.tool()
 async def get_all_omada_identities(omada_base_url: str = None,
                                   scope: str = None,
-                                  top: int = 100,
+                                  top: int = 1000,
                                   skip: int = None,
                                   select_fields: str = None,
                                   order_by: str = None,
@@ -744,6 +821,7 @@ async def count_omada_identities(filter_condition: str = None,
 def ping() -> str:
     return "pong"
 
+@with_function_logging
 @mcp.tool()
 async def get_azure_token(scope: str = None) -> str:
     """
@@ -846,7 +924,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
         if variables:
             payload["variables"] = variables
 
-        print (f"GraphQL Request to {graphql_url} with impersonation of {impersonate_user}")
+        logger.info(f"GraphQL Request to {graphql_url} with impersonation of {impersonate_user}")
         # Execute request
         async with httpx.AsyncClient() as client:
             response = await client.post(graphql_url, json=payload, headers=headers, timeout=30.0)
@@ -883,6 +961,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
             "error_type": type(e).__name__
         }
 
+@with_function_logging
 @mcp.tool()
 async def get_access_requests(impersonate_user: str, filter_field: str = None, filter_value: str = None) -> str:
     """Get access requests from Omada GraphQL API using user impersonation.
@@ -1001,6 +1080,7 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
             "error_type": type(e).__name__
         }, indent=2)
 
+@with_function_logging
 @mcp.tool()
 async def create_access_request(impersonate_user: str, reason: str, context: str,
                               resources: str, valid_from: str = None, valid_to: str = None,
@@ -1027,6 +1107,10 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
         valid_to: Optional valid to date/time
         omada_base_url: Optional Omada base URL (uses env var if not provided)
         scope: Optional OAuth scope (uses default if not provided)
+
+    Logging:
+        Log level controlled by LOG_LEVEL_create_access_request in .env file
+        Falls back to global LOG_LEVEL if not set
 
     Returns:
         JSON string containing the created access request ID or error information
@@ -1063,7 +1147,7 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
             }, indent=2)
 
         # Get identity ID from the impersonate_user email
-        print(f"Looking up identity ID for email: {impersonate_user}")
+        logger.debug(f"Looking up identity ID for email: {impersonate_user}")
         identity_result = await query_omada_identity(
             field_filters=[{"field": "EMAIL", "value": impersonate_user, "operator": "eq"}],
             omada_base_url=omada_base_url,
@@ -1094,7 +1178,7 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
                     "identity_data": identity_entity
                 }, indent=2)
 
-            print(f"Found identity ID: {identity_id} for {impersonate_user}")
+            logger.debug(f"Found identity ID: {identity_id} for {impersonate_user}")
 
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             return json.dumps({
@@ -1137,7 +1221,7 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
     }}
 }}"""
         
-        print(f"Prepared GraphQL mutation:\n{mutation}")
+        logger.debug(f"Prepared GraphQL mutation:\n{mutation}")
 
         # Execute the GraphQL mutation (use version 1.1 for access request creation)
         result = await _execute_graphql_request(
@@ -1152,12 +1236,12 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
             data = result["data"]
 
             # Debug: Print the actual response structure
-            print(f"GraphQL Response Data Structure: {json.dumps(data, indent=2)}")
+            logger.debug(f"GraphQL Response Data Structure: {json.dumps(data, indent=2)}")
 
             # Check if mutation was successful and extract the created access request ID
             if "data" in data and "createAccessRequest" in data["data"]:
                 create_request_response = data["data"]["createAccessRequest"]
-                print(f"CreateAccessRequest Response: {json.dumps(create_request_response, indent=2)}")
+                logger.debug(f"CreateAccessRequest Response: {json.dumps(create_request_response, indent=2)}")
 
                 # Handle both single object and array responses
                 if isinstance(create_request_response, list):
@@ -1266,7 +1350,11 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
             "impersonated_user": impersonate_user,
             "error_type": type(e).__name__
         }, indent=2)
+    finally:
+        # Restore original logger level
+        logger.setLevel(old_level)
 
+@with_function_logging
 @mcp.tool()
 async def test_azure_token(api_endpoint: str = "https://graph.microsoft.com/v1.0/me",
                           scope: str = "https://graph.microsoft.com/.default") -> str:
@@ -1302,15 +1390,151 @@ async def test_azure_token(api_endpoint: str = "https://graph.microsoft.com/v1.0
     except Exception as e:
         return f"Error testing token: {str(e)}"
 
+@with_function_logging
+@mcp.tool()
+async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
+                                       system_id: str = None, context_id: str = None,
+                                       omada_base_url: str = None, scope: str = None) -> str:
+    """
+    Get resources available for a request beneficiary using Omada GraphQL API.
+
+    IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
+    you MUST prompt the user to provide them before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        identity_id: The beneficiary identity ID (e.g., "e3e869c4-369a-476e-a969-d57059d0b1e4")
+                    PROMPT: "Please provide the beneficiary identity ID"
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+
+    Optional parameters:
+        system_id: System ID to filter resources by (e.g., "1c2768e9-86fd-43fd-9e0d-5c8fee21b59b")
+        context_id: Context ID to filter resources by (e.g., "6dd03400-ddb5-4cc4-bfff-490d94b195a9")
+        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
+        scope: OAuth2 scope for the token
+
+    Returns:
+        JSON response with resources data or error message
+    """
+    try:
+        # Validate mandatory fields
+        if not identity_id or not identity_id.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: identity_id",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        if not impersonate_user or not impersonate_user.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: impersonate_user",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Build the filters object dynamically based on provided parameters
+        filters = f'beneficiaryIds: "{identity_id}"'
+
+        if system_id and system_id.strip():
+            filters += f', systemId: "{system_id}"'
+
+        if context_id and context_id.strip():
+            filters += f', contextId: "{context_id}"'
+
+        # Build GraphQL query with the filters
+        query = f"""query GetResourcesForBeneficiary {{
+  accessRequestComponents {{
+    resources(
+      filters: {{{filters}}}
+    ) {{
+      data {{
+        name
+        id
+        description
+        system {{
+          name
+          id
+        }}
+      }}
+    }}
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request
+        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope)
+
+        if result["success"]:
+            data = result["data"]
+            # Extract resources from the GraphQL response
+            if ('data' in data and 'accessRequestComponents' in data['data']):
+                access_request_components = data['data']['accessRequestComponents']
+                resources = access_request_components.get('resources', {}).get('data', [])
+
+                return json.dumps({
+                    "status": "success",
+                    "beneficiary_id": identity_id,
+                    "impersonated_user": impersonate_user,
+                    "system_id": system_id,
+                    "context_id": context_id,
+                    "resources_count": len(resources),
+                    "resources": resources,
+                    "endpoint": result["endpoint"]
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "no_resources",
+                    "beneficiary_id": identity_id,
+                    "impersonated_user": impersonate_user,
+                    "message": "No resources found in response",
+                    "response": data
+                }, indent=2)
+        else:
+            # Handle GraphQL request failure
+            error_result = {
+                "status": "error",
+                "beneficiary_id": identity_id,
+                "impersonated_user": impersonate_user,
+                "error_type": result.get("error_type", "GraphQLError")
+            }
+
+            if "status_code" in result:
+                error_result["status_code"] = result["status_code"]
+            if "error" in result:
+                error_result["error"] = result["error"]
+            if "endpoint" in result:
+                error_result["endpoint"] = result["endpoint"]
+
+            return json.dumps(error_result, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "exception",
+            "beneficiary_id": identity_id,
+            "impersonated_user": impersonate_user,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }, indent=2)
+
+
+@with_function_logging
 @mcp.tool()
 async def get_identity_contexts(identity_id: str, impersonate_user: str,
                                omada_base_url: str = None, scope: str = None) -> str:
     """
     Get contexts for a specific identity using Omada GraphQL API.
 
-    Args:
+    IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
+    you MUST prompt the user to provide them before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
         identity_id: The identity ID to get contexts for (e.g., "e3e869c4-369a-476e-a969-d57059d0b1e4")
+                    PROMPT: "Please provide the identity ID"
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+
+    Optional parameters:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
 
@@ -1318,8 +1542,32 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
         JSON response with contexts data or error message
     """
     try:
+        # Validate mandatory fields
+        if not identity_id or not identity_id.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: identity_id",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        if not impersonate_user or not impersonate_user.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: impersonate_user",
+                "error_type": "ValidationError"
+            }, indent=2)
         # Build GraphQL query with the provided identity_id
-        query = f'query accessRequest {{\\r\\n    accessRequest {{\\r\\n        contexts(identityIds:["{identity_id}"]) {{ \\r\\n            id\\r\\n            name\\r\\n         }}\\r\\n    }}\\r\\n}}'
+        query = f"""query GetContextsForIdentity {{
+  accessRequestComponents {{
+    contexts(identityIds: "{identity_id}") {{
+      id
+      displayName
+      type
+    }}
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request
         result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope)
@@ -1327,9 +1575,9 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
         if result["success"]:
             data = result["data"]
             # Extract contexts from the GraphQL response
-            if ('data' in data and 'accessRequest' in data['data']):
-                access_request_obj = data['data']['accessRequest']
-                contexts = access_request_obj.get('contexts', [])
+            if ('data' in data and 'accessRequestComponents' in data['data']):
+                access_request_components = data['data']['accessRequestComponents']
+                contexts = access_request_components.get('contexts', [])
 
                 return json.dumps({
                     "status": "success",
@@ -1378,29 +1626,29 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
 async def test_token_locally():
     """Test function to run locally and see token output"""
     global _cached_token
-    print("Testing Azure OAuth2 token retrieval...")
+    logger.info("Testing Azure OAuth2 token retrieval...")
     
     # Clear cached token to force fresh request
     _cached_token = None
-    print("Cleared cached token")
+    logger.info("Cleared cached token")
     
     try:
         token = await get_azure_token()
-        print(f"Token received: {token}")
+        logger.info(f"Token received: {token}")
         
-        print("\nToken info:")
+        logger.info("Token info:")
         token_info = await get_azure_token_info()
-        print(token_info)
+        logger.info(f"Token details: {token_info}")
         
-        print("\nTesting Omada API call:")
+        logger.info("Testing Omada API call:")
         result = await query_omada_identity([
             {"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
             {"field": "LASTNAME", "value": "Taylor", "operator": "eq"}
         ])
-        print(result)
+        logger.info(f"API result: {result}")
         
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
 
 if __name__ == "__main__":
     import sys
@@ -1417,7 +1665,7 @@ if __name__ == "__main__":
             if len(sys.argv) > 2:
                 impersonate_user = sys.argv[2]
 
-            print(f"🔍 Testing get_access_requests with impersonate_user: {impersonate_user}")
+            logger.info(f"🔍 Testing get_access_requests with impersonate_user: {impersonate_user}")
 
             try:
                 # Get OAuth access token first
@@ -1431,9 +1679,9 @@ if __name__ == "__main__":
                 graphql_url = f"{omada_base_url}/api/Domain/{graphql_version}"
 
                 # Test 1: Without filter
-                print("\n" + "="*80)
-                print("🚀 TEST 1: ACCESS REQUESTS WITHOUT FILTER")
-                print("="*80)
+                logger.debug("\n" + "="*80)
+                logger.info("🚀 TEST 1: ACCESS REQUESTS WITHOUT FILTER")
+                logger.debug("="*80)
 
                 graphql_query_no_filter = {
                     "query": """query GetAccessRequests {
@@ -1466,21 +1714,21 @@ if __name__ == "__main__":
                     "impersonate_user": impersonate_user
                 }
 
-                print(f"📡 URL: {graphql_url}")
-                print(f"📋 Method: POST")
+                logger.debug(f"📡 URL: {graphql_url}")
+                logger.debug(f"📋 Method: POST")
 
-                print(f"\n📤 Request Headers:")
+                logger.debug(f"\n📤 Request Headers:")
                 for key, value in headers.items():
                     if key == "Authorization":
-                        print(f"  ├── {key}: Bearer {value.split(' ')[1][:20]}...")
+                        logger.debug(f"  ├── {key}: Bearer {value.split(' ')[1][:20]}...")
                     else:
-                        print(f"  ├── {key}: {value}")
+                        logger.debug(f"  ├── {key}: {value}")
 
-                print(f"\n📝 Request Body:")
-                print(json.dumps(graphql_query_no_filter, indent=2))
+                logger.debug(f"\n📝 Request Body:")
+                logger.debug(json.dumps(graphql_query_no_filter, indent=2))
 
                 # Execute request
-                print(f"\n⏳ Executing POST request...")
+                logger.debug(f"\n⏳ Executing POST request...")
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
                         graphql_url,
@@ -1489,22 +1737,22 @@ if __name__ == "__main__":
                         timeout=30.0
                     )
 
-                    print(f"\n📥 Response Status: {response.status_code}")
-                    print(f"📥 Response Headers:")
+                    logger.debug(f"\n📥 Response Status: {response.status_code}")
+                    logger.debug(f"📥 Response Headers:")
                     for key, value in response.headers.items():
-                        print(f"  ├── {key}: {value}")
+                        logger.debug(f"  ├── {key}: {value}")
 
-                    print(f"\n📄 Response Body:")
+                    logger.debug(f"\n📄 Response Body:")
                     if response.status_code == 200:
                         result = response.json()
-                        print(json.dumps(result, indent=2))
+                        logger.debug(json.dumps(result, indent=2))
                     else:
-                        print(response.text)
+                        logger.debug(response.text)
 
                 # Test 2: With filter
-                print("\n" + "="*80)
-                print("🚀 TEST 2: ACCESS REQUESTS WITH FILTER (status=PENDING)")
-                print("="*80)
+                logger.debug("\n" + "="*80)
+                logger.info("🚀 TEST 2: ACCESS REQUESTS WITH FILTER (status=PENDING)")
+                logger.debug("="*80)
 
                 graphql_query_filtered = {
                     "query": f"""query GetAccessRequests {{
@@ -1531,21 +1779,21 @@ if __name__ == "__main__":
 }}"""
                 }
 
-                print(f"📡 URL: {graphql_url}")
-                print(f"📋 Method: POST")
+                logger.debug(f"📡 URL: {graphql_url}")
+                logger.debug(f"📋 Method: POST")
 
-                print(f"\n📤 Request Headers:")
+                logger.debug(f"\n📤 Request Headers:")
                 for key, value in headers.items():
                     if key == "Authorization":
-                        print(f"  ├── {key}: Bearer {value.split(' ')[1][:20]}...")
+                        logger.debug(f"  ├── {key}: Bearer {value.split(' ')[1][:20]}...")
                     else:
-                        print(f"  ├── {key}: {value}")
+                        logger.debug(f"  ├── {key}: {value}")
 
-                print(f"\n📝 Request Body:")
-                print(json.dumps(graphql_query_filtered, indent=2))
+                logger.debug(f"\n📝 Request Body:")
+                logger.debug(json.dumps(graphql_query_filtered, indent=2))
 
                 # Execute filtered request
-                print(f"\n⏳ Executing POST request...")
+                logger.debug(f"\n⏳ Executing POST request...")
                 async with httpx.AsyncClient() as client:
                     response_filtered = await client.post(
                         graphql_url,
@@ -1554,22 +1802,22 @@ if __name__ == "__main__":
                         timeout=30.0
                     )
 
-                    print(f"\n📥 Response Status: {response_filtered.status_code}")
-                    print(f"📥 Response Headers:")
+                    logger.debug(f"\n📥 Response Status: {response_filtered.status_code}")
+                    logger.debug(f"📥 Response Headers:")
                     for key, value in response_filtered.headers.items():
-                        print(f"  ├── {key}: {value}")
+                        logger.debug(f"  ├── {key}: {value}")
 
-                    print(f"\n📄 Response Body:")
+                    logger.debug(f"\n📄 Response Body:")
                     if response_filtered.status_code == 200:
                         result_filtered = response_filtered.json()
-                        print(json.dumps(result_filtered, indent=2))
+                        logger.debug(json.dumps(result_filtered, indent=2))
                     else:
-                        print(response_filtered.text)
+                        logger.debug(response_filtered.text)
 
-                print(f"\n✅ Testing completed!")
+                logger.info(f"\n✅ Testing completed!")
 
             except Exception as e:
-                print(f"❌ Error testing access requests: {e}")
+                logger.error(f"❌ Error testing access requests: {e}")
 
         asyncio.run(test_access_requests())
     else:
