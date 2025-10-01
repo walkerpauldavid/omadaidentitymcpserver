@@ -15,11 +15,24 @@ load_dotenv()
 
 # Configure logging system
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FILE = os.getenv("LOG_FILE", "omada_mcp_server.log")
+
+# Create logs directory if it doesn't exist
+log_dir = os.path.dirname(LOG_FILE) if os.path.dirname(LOG_FILE) else "."
+if log_dir != "." and not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+# Configure logging with both file and console handlers
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
+logger.info(f"Logging initialized. Writing logs to: {os.path.abspath(LOG_FILE)}")
 
 def get_function_log_level(function_name: str) -> int:
     """
@@ -1512,6 +1525,200 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         return json.dumps({
             "status": "exception",
             "beneficiary_id": identity_id,
+            "impersonated_user": impersonate_user,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }, indent=2)
+
+
+@with_function_logging
+@mcp.tool()
+async def get_calculated_assignments_detailed(identity_id: str, impersonate_user: str,
+                                             resource_type_name: str = None,
+                                             compliance_status: str = None,
+                                             omada_base_url: str = None,
+                                             scope: str = None) -> str:
+    """
+    Get detailed calculated assignments with compliance and violation status using Omada GraphQL API.
+
+    IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
+    you MUST prompt the user to provide them before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        identity_id: The identity ID to get assignments for (e.g., "5da7f8fc-0119-46b0-a6b4-06e5c78edf68")
+                    PROMPT: "Please provide the identity ID"
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+
+    Optional parameters:
+        resource_type_name: Filter by resource type name (e.g., "Active Directory - Security Group")
+                           Uses CONTAINS operator if provided
+        compliance_status: Filter by compliance status (e.g., "NOT APPROVED", "APPROVED")
+                          Uses CONTAINS operator if provided
+        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
+        scope: OAuth2 scope for the token
+
+    Returns:
+        JSON response with detailed assignments including compliance status, violations, accounts, and resources
+    """
+    try:
+        # Validate mandatory fields
+        if not identity_id or not identity_id.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: identity_id",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        if not impersonate_user or not impersonate_user.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: impersonate_user",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Build the filters object dynamically based on provided parameters
+        filters = []
+
+        # identityIds is always required
+        filters.append(f'identityIds: "{identity_id}"')
+
+        # Add optional filters only if provided
+        if resource_type_name and resource_type_name.strip():
+            filters.append(f'resourceTypeName: {{filterValue: "{resource_type_name}", operator: CONTAINS}}')
+
+        if compliance_status and compliance_status.strip():
+            filters.append(f'complianceStatus: {{filterValue: "{compliance_status}", operator: CONTAINS}}')
+
+        # Join filters
+        filters_string = ', '.join(filters)
+
+        # Build GraphQL query with the filters
+        query = f"""query GetCalculatedAssignmentsDetailed {{
+  calculatedAssignments(
+    filters: {{{filters_string}}}
+  ) {{
+    pages
+    total
+    data {{
+      id
+      complianceStatus
+      disabled
+      validFrom
+      validTo
+      violations {{
+        description
+        violationStatus
+      }}
+      account {{
+        accountName
+        accountType {{
+          name
+          id
+        }}
+        system {{
+          name
+          id
+        }}
+      }}
+      identity {{
+        identityId
+        lastName
+        firstName
+        id
+        accounts {{
+          accountName
+          system {{
+            name
+            id
+          }}
+        }}
+      }}
+      resource {{
+        name
+        id
+        description
+        system {{
+          id
+          name
+        }}
+        resourceType {{
+          id
+          name
+        }}
+      }}
+      reason {{
+        description
+        reasonType
+        causeObjectKey
+      }}
+    }}
+  }}
+}}"""
+
+        print(f"GraphQL query: {query}")
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 2.19
+        result = await _execute_graphql_request(
+            query,
+            impersonate_user,
+            omada_base_url,
+            scope,
+            graphql_version="2.19"
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract calculated assignments from the GraphQL response
+            if ('data' in data and 'calculatedAssignments' in data['data']):
+                calculated_assignments = data['data']['calculatedAssignments']
+                assignments_data = calculated_assignments.get('data', [])
+                total = calculated_assignments.get('total', 0)
+                pages = calculated_assignments.get('pages', 0)
+
+                return json.dumps({
+                    "status": "success",
+                    "identity_id": identity_id,
+                    "impersonated_user": impersonate_user,
+                    "resource_type_name": resource_type_name,
+                    "compliance_status": compliance_status,
+                    "total_assignments": total,
+                    "pages": pages,
+                    "assignments_returned": len(assignments_data),
+                    "assignments": assignments_data,
+                    "endpoint": result["endpoint"]
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "no_assignments",
+                    "identity_id": identity_id,
+                    "impersonated_user": impersonate_user,
+                    "message": "No calculated assignments found in response",
+                    "response": data
+                }, indent=2)
+        else:
+            # Handle GraphQL request failure
+            error_result = {
+                "status": "error",
+                "identity_id": identity_id,
+                "impersonated_user": impersonate_user,
+                "error_type": result.get("error_type", "GraphQLError")
+            }
+
+            if "status_code" in result:
+                error_result["status_code"] = result["status_code"]
+            if "error" in result:
+                error_result["error"] = result["error"]
+            if "endpoint" in result:
+                error_result["endpoint"] = result["endpoint"]
+
+            return json.dumps(error_result, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "exception",
+            "identity_id": identity_id,
             "impersonated_user": impersonate_user,
             "error": str(e),
             "error_type": type(e).__name__
