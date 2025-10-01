@@ -790,7 +790,7 @@ async def get_azure_token_info(scope: str = None) -> str:
     except Exception as e:
         return f"Error getting token info: {str(e)}"
 
-async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = None, scope: str = None):
+async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = None, scope: str = None, graphql_version: str = None):
     """
     Prepare common GraphQL request components (URL, headers, token).
 
@@ -812,8 +812,9 @@ async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = 
     # Remove trailing slash if present
     omada_base_url = omada_base_url.rstrip('/')
 
-    # Get GraphQL endpoint version from environment (default to 3.0)
-    graphql_version = os.getenv("GRAPHQL_ENDPOINT_VERSION", "3.0")
+    # Get GraphQL endpoint version from parameter, environment, or default to 3.0
+    if not graphql_version:
+        graphql_version = os.getenv("GRAPHQL_ENDPOINT_VERSION", "3.0")
     graphql_url = f"{omada_base_url}/api/Domain/{graphql_version}"
 
     # Prepare headers
@@ -827,7 +828,7 @@ async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = 
 
 async def _execute_graphql_request(query: str, impersonate_user: str,
                                  omada_base_url: str = None, scope: str = None,
-                                 variables: dict = None) -> dict:
+                                 variables: dict = None, graphql_version: str = None) -> dict:
     """
     Execute a GraphQL request with common setup and error handling.
 
@@ -837,7 +838,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
     try:
         # Setup
         graphql_url, headers, token = await _prepare_graphql_request(
-            impersonate_user, omada_base_url, scope
+            impersonate_user, omada_base_url, scope, graphql_version
         )
 
         # Build payload
@@ -845,23 +846,34 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
         if variables:
             payload["variables"] = variables
 
+        print (f"GraphQL Request to {graphql_url} with impersonation of {impersonate_user}")
         # Execute request
         async with httpx.AsyncClient() as client:
             response = await client.post(graphql_url, json=payload, headers=headers, timeout=30.0)
+
+            # Capture raw HTTP details for debugging
+            raw_request_body = json.dumps(payload, indent=2)
+            raw_response_body = response.text
 
             if response.status_code == 200:
                 return {
                     "success": True,
                     "data": response.json(),
                     "status_code": response.status_code,
-                    "endpoint": graphql_url
+                    "endpoint": graphql_url,
+                    "raw_request_body": raw_request_body,
+                    "raw_response_body": raw_response_body,
+                    "request_headers": dict(headers)
                 }
             else:
                 return {
                     "success": False,
                     "status_code": response.status_code,
                     "error": response.text,
-                    "endpoint": graphql_url
+                    "endpoint": graphql_url,
+                    "raw_request_body": raw_request_body,
+                    "raw_response_body": raw_response_body,
+                    "request_headers": dict(headers)
                 }
 
     except Exception as e:
@@ -990,7 +1002,273 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
         }, indent=2)
 
 @mcp.tool()
-async def test_azure_token(api_endpoint: str = "https://graph.microsoft.com/v1.0/me", 
+async def create_access_request(impersonate_user: str, reason: str, context: str,
+                              resources: str, valid_from: str = None, valid_to: str = None,
+                              omada_base_url: str = None, scope: str = None) -> str:
+    """Create an access request using GraphQL mutation.
+
+    IMPORTANT: This function requires 4 mandatory parameters. If any are missing,
+    you MUST prompt the user to provide them before calling this function.
+    The identity ID is automatically fetched using the impersonate_user email.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., user@domain.com)
+                         PROMPT: "Please provide the email address to impersonate"
+                         NOTE: This email will be used to automatically lookup the identity ID
+        reason: Reason for the access request (cannot be empty)
+                PROMPT: "Please provide a reason for this access request"
+        context: Business context for the access request (cannot be empty)
+                PROMPT: "Please provide the business context for this access request"
+        resources: Resources to request access for (JSON array format, cannot be empty)
+                  PROMPT: "Please provide the resources in JSON array format"
+
+    Optional parameters:
+        valid_from: Optional valid from date/time
+        valid_to: Optional valid to date/time
+        omada_base_url: Optional Omada base URL (uses env var if not provided)
+        scope: Optional OAuth scope (uses default if not provided)
+
+    Returns:
+        JSON string containing the created access request ID or error information
+    """
+    try:
+        # Validate mandatory fields
+        if not impersonate_user or not impersonate_user.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: impersonate_user",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        if not reason or not reason.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: reason",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+
+        if not context or not context.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: context",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        if not resources or not resources.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: resources",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Get identity ID from the impersonate_user email
+        print(f"Looking up identity ID for email: {impersonate_user}")
+        identity_result = await query_omada_identity(
+            field_filters=[{"field": "EMAIL", "value": impersonate_user, "operator": "eq"}],
+            omada_base_url=omada_base_url,
+            scope=scope,
+            select_fields="UId",
+            top=1
+        )
+
+        # Parse the identity lookup result
+        try:
+            identity_data = json.loads(identity_result)
+            if identity_data.get("status") != "success" or not identity_data.get("data", {}).get("value"):
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Could not find identity for email: {impersonate_user}",
+                    "error_type": "IdentityLookupError",
+                    "lookup_result": identity_data
+                }, indent=2)
+
+            identity_entity = identity_data["data"]["value"][0]
+            identity_id = str(identity_entity.get("UId"))
+
+            if not identity_id:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Identity found but no ID available for email: {impersonate_user}",
+                    "error_type": "IdentityLookupError",
+                    "identity_data": identity_entity
+                }, indent=2)
+
+            print(f"Found identity ID: {identity_id} for {impersonate_user}")
+
+        except (json.JSONDecodeError, KeyError, IndexError) as e:
+            return json.dumps({
+                "status": "error",
+                "message": f"Failed to parse identity lookup result: {str(e)}",
+                "error_type": "IdentityLookupParseError",
+                "raw_result": identity_result
+            }, indent=2)
+
+        # Build the GraphQL mutation with template variables filled in
+        valid_from_clause = f'validFrom: "{valid_from}",' if valid_from else ''
+        valid_to_clause = f'validTo: "{valid_to}",' if valid_to else ''
+        context_clause = f'context: "{context}",'
+
+        mutation = f"""mutation CreateAccessRequest {{
+    createAccessRequest(accessRequest: {{
+        reason: "{reason}",
+        {valid_from_clause}
+        {valid_to_clause}
+        {context_clause}
+        identities: {{id: "{identity_id}"}},
+        resources: {resources}
+        }})
+    {{
+        id
+        status {{
+            approvalStatus
+            requestAssignmentState
+        }}
+        resource {{
+            name
+            id
+            system {{
+                name
+                id
+            }}
+        }}
+        validFrom
+        validTo
+    }}
+}}"""
+        
+        print(f"Prepared GraphQL mutation:\n{mutation}")
+
+        # Execute the GraphQL mutation (use version 1.1 for access request creation)
+        result = await _execute_graphql_request(
+            query=mutation,
+            impersonate_user=impersonate_user,
+            omada_base_url=omada_base_url,
+            scope=scope,
+            graphql_version="1.1"
+        )
+
+        if result["success"]:
+            data = result["data"]
+
+            # Debug: Print the actual response structure
+            print(f"GraphQL Response Data Structure: {json.dumps(data, indent=2)}")
+
+            # Check if mutation was successful and extract the created access request ID
+            if "data" in data and "createAccessRequest" in data["data"]:
+                create_request_response = data["data"]["createAccessRequest"]
+                print(f"CreateAccessRequest Response: {json.dumps(create_request_response, indent=2)}")
+
+                # Handle both single object and array responses
+                if isinstance(create_request_response, list):
+                    if len(create_request_response) > 0:
+                        access_request_data = create_request_response[0]
+                    else:
+                        return json.dumps({
+                            "status": "error",
+                            "message": "Empty response from createAccessRequest",
+                            "impersonated_user": impersonate_user,
+                            "raw_response": data,
+                            "http_debug": {
+                                "raw_request_body": result.get("raw_request_body"),
+                                "raw_response_body": result.get("raw_response_body"),
+                                "request_headers": result.get("request_headers")
+                            }
+                        }, indent=2)
+                else:
+                    access_request_data = create_request_response
+
+                access_request_id = access_request_data.get("id")
+
+                formatted_result = {
+                    "status": "success",
+                    "message": "Access request created successfully",
+                    "impersonated_user": impersonate_user,
+                    "access_request_id": access_request_id,
+                    "endpoint": result["endpoint"],
+                    "access_request_details": {
+                        "id": access_request_id,
+                        "status": access_request_data.get("status"),
+                        "resource": access_request_data.get("resource"),
+                        "validFrom": access_request_data.get("validFrom"),
+                        "validTo": access_request_data.get("validTo")
+                    },
+                    "request_details": {
+                        "reason": reason,
+                        "identity_id": identity_id,
+                        "identity_email": impersonate_user,
+                        "resources": resources,
+                        "valid_from": valid_from,
+                        "valid_to": valid_to,
+                        "context": context
+                    },
+                    "http_debug": {
+                        "raw_request_body": result.get("raw_request_body"),
+                        "raw_response_body": result.get("raw_response_body"),
+                        "request_headers": result.get("request_headers")
+                    }
+                }
+
+                return json.dumps(formatted_result, indent=2)
+            elif "errors" in data:
+                # Handle GraphQL errors
+                return json.dumps({
+                    "status": "error",
+                    "message": "GraphQL mutation failed",
+                    "impersonated_user": impersonate_user,
+                    "errors": data["errors"],
+                    "endpoint": result["endpoint"],
+                    "http_debug": {
+                        "raw_request_body": result.get("raw_request_body"),
+                        "raw_response_body": result.get("raw_response_body"),
+                        "request_headers": result.get("request_headers")
+                    }
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "message": "Unexpected response format",
+                    "impersonated_user": impersonate_user,
+                    "raw_response": data,
+                    "http_debug": {
+                        "raw_request_body": result.get("raw_request_body"),
+                        "raw_response_body": result.get("raw_response_body"),
+                        "request_headers": result.get("request_headers")
+                    }
+                }, indent=2)
+        else:
+            # Handle HTTP request failure
+            error_result = {
+                "status": "error",
+                "message": f"GraphQL request failed with status {result.get('status_code', 'unknown')}",
+                "impersonated_user": impersonate_user,
+                "error_type": result.get("error_type", "GraphQLError")
+            }
+
+            if "error" in result:
+                error_result["response_body"] = result["error"]
+            if "endpoint" in result:
+                error_result["endpoint"] = result["endpoint"]
+
+            # Add HTTP debug information
+            error_result["http_debug"] = {
+                "raw_request_body": result.get("raw_request_body"),
+                "raw_response_body": result.get("raw_response_body"),
+                "request_headers": result.get("request_headers")
+            }
+
+            return json.dumps(error_result, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "error",
+            "message": f"Error creating access request: {str(e)}",
+            "impersonated_user": impersonate_user,
+            "error_type": type(e).__name__
+        }, indent=2)
+
+@mcp.tool()
+async def test_azure_token(api_endpoint: str = "https://graph.microsoft.com/v1.0/me",
                           scope: str = "https://graph.microsoft.com/.default") -> str:
     """
     Test the Azure token by making an authenticated API call.
