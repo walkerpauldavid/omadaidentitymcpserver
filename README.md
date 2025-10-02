@@ -1,6 +1,6 @@
 # Omada Identity MCP Server
 
-A Model Context Protocol (MCP) server that provides integration with Omada Identity & Access Management system. This server enables Claude Desktop and other MCP clients to interact with Omada's OData REST API and GraphQL API for identity management, access requests, and compliance monitoring.
+A Model Context Protocol (MCP) server that provides integration with Omada Identity Governance and Administration system. This server enables Claude Desktop and other MCP clients to interact with Omada's OData REST API and GraphQL API for identity management, access requests, and compliance monitoring.
 
 ## Features
 
