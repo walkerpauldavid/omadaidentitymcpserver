@@ -268,21 +268,21 @@ Example log output:
 
 ```
 helloWorldServer/
-   server.py                          # Main MCP server implementation
-   .env                               # Environment configuration (not in git)
-   .gitignore                        # Git ignore rules
-   README.md                         # This file
-   requirements.txt                  # Python dependencies
-   graphql_*.txt                     # GraphQL query reference files
-   tests/                            # Test scripts
-      test_get_identity_contexts.py
-      test_get_calculated_assignments_detailed.py
-      test_create_access_request.py
-      ... (25+ test files)
-   utility/                          # Utility scripts
-       kill_claude.bat
-       kill_claude.ps1
-       quick_kill_claude.ps1
+ server.py                          # Main MCP server implementation
+ .env                               # Environment configuration (not in git)
+ .gitignore                        # Git ignore rules
+ README.md                         # This file
+ requirements.txt                  # Python dependencies
+ graphql_*.txt                     # GraphQL query reference files
+ tests/                            # Test scripts
+    test_get_identity_contexts.py
+    test_get_calculated_assignments_detailed.py
+    test_create_access_request.py
+    ... (25+ test files)
+ utility/                          # Utility scripts
+     kill_claude.bat
+     kill_claude.ps1
+     quick_kill_claude.ps1
 ```
 
 ## Error Handling
