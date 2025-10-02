@@ -306,6 +306,7 @@ async def get_cached_token(scope: str = None) -> Dict[str, Any]:
     _cached_token = await oauth_client.get_access_token(scope)
     return _cached_token
 
+@with_function_logging
 @mcp.tool()
 async def query_omada_entity(entity_type: str = "Identity",
                             filters: dict = None,
@@ -612,6 +613,7 @@ async def query_omada_identity(field_filters: list = None,
         include_count=include_count
     )
 
+@with_function_logging
 @mcp.tool()
 async def query_omada_resources(resource_type_id: int = None,
                                resource_type_name: str = None,
@@ -669,6 +671,7 @@ async def query_omada_resources(resource_type_id: int = None,
         include_count=include_count
     )
 
+@with_function_logging
 @mcp.tool()
 async def query_omada_entities(entity_type: str = "Identity",
                               field_filters: list = None,
@@ -725,6 +728,7 @@ async def query_omada_entities(entity_type: str = "Identity",
         include_count=include_count
     )
 
+@with_function_logging
 @mcp.tool()
 async def query_calculated_assignments(identity_id: int = None,
                                       select_fields: str = "AssignmentKey,AccountName",
@@ -774,6 +778,7 @@ async def query_calculated_assignments(identity_id: int = None,
         include_count=include_count
     )
 
+@with_function_logging
 @mcp.tool()
 async def get_all_omada_identities(omada_base_url: str = None,
                                   scope: str = None,
@@ -788,7 +793,7 @@ async def get_all_omada_identities(omada_base_url: str = None,
     Args:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
-        top: Maximum number of records to return (default: 100)
+        top: Maximum number of records to return (default: 1000)
         skip: Number of records to skip for pagination
         select_fields: Comma-separated list of fields to select
         order_by: Field(s) to order by
@@ -808,6 +813,7 @@ async def get_all_omada_identities(omada_base_url: str = None,
         include_count=include_count
     )
 
+@with_function_logging
 @mcp.tool()
 async def count_omada_identities(filter_condition: str = None,
                                 omada_base_url: str = None,
@@ -830,6 +836,7 @@ async def count_omada_identities(filter_condition: str = None,
         count_only=True
     )
 
+@with_function_logging
 @mcp.tool()
 def ping() -> str:
     return "pong"
@@ -853,6 +860,7 @@ async def get_azure_token(scope: str = None) -> str:
     except Exception as e:
         return f"Error getting token: {str(e)}"
 
+@with_function_logging
 @mcp.tool()
 async def get_azure_token_info(scope: str = None) -> str:
     """
@@ -1363,9 +1371,6 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
             "impersonated_user": impersonate_user,
             "error_type": type(e).__name__
         }, indent=2)
-    finally:
-        # Restore original logger level
-        logger.setLevel(old_level)
 
 @with_function_logging
 @mcp.tool()
