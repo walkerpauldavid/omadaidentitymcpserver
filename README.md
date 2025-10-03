@@ -94,8 +94,11 @@ LOG_LEVEL_get_resources_for_beneficiary=DEBUG
 LOG_LEVEL_get_calculated_assignments_detailed=DEBUG
 LOG_LEVEL_create_access_request=DEBUG
 LOG_LEVEL_get_access_requests=INFO
-LOG_LEVEL_get_pending_approvals=INFO
-LOG_LEVEL_make_approval_decision=INFO
+
+# Approval Workflow Functions
+LOG_LEVEL_get_pending_approvals=DEBUG
+LOG_LEVEL_get_approval_details=DEBUG
+LOG_LEVEL_make_approval_decision=DEBUG
 
 # Core Query Functions
 LOG_LEVEL_query_omada_entity=INFO
