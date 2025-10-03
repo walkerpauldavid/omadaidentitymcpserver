@@ -228,6 +228,7 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
         return data
 
     # Define key fields for each GraphQL data type
+    # Fields listed here are ONLY fields that will be returned
     summary_fields = {
         "PendingApproval": ["workflowStep", "workflowStepTitle", "reason"],
         "AccessRequest": ["id", "beneficiary", "resource", "status"],
@@ -236,12 +237,24 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
         "Resource": ["id", "name", "description", "system"]
     }
 
+    # Define fields to explicitly exclude (technical fields users shouldn't see)
+    exclude_fields = {
+        "PendingApproval": ["surveyId", "surveyObjectKey", "history"],
+        "AccessRequest": [],
+        "CalculatedAssignment": [],
+        "Context": [],
+        "Resource": []
+    }
+
     # Get relevant fields for this data type
     fields_to_keep = summary_fields.get(data_type, ["id", "name"])
+    fields_to_exclude = exclude_fields.get(data_type, [])
 
     summarized = []
     for item in data:
         summary = {}
+
+        # Only include explicitly allowed fields
         for field in fields_to_keep:
             if field in item:
                 value = item[field]
@@ -251,9 +264,11 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
                 else:
                     summary[field] = value
 
-        # Always include id if available and not already in summary
-        if "id" in item and "id" not in summary:
-            summary["id"] = item["id"]
+        # Don't auto-add id field for PendingApproval type
+        # For other types, include id if available and not already in summary
+        if data_type != "PendingApproval":
+            if "id" in item and "id" not in summary and "id" not in fields_to_exclude:
+                summary["id"] = item["id"]
 
         summarized.append(summary)
 
@@ -2001,7 +2016,10 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
                 # Apply summarization if requested
                 response_data = questions_data
                 if summary_mode:
+                    logger.debug(f"Applying summarization to {len(questions_data)} pending approvals")
+                    logger.debug(f"Original data fields: {list(questions_data[0].keys()) if questions_data else []}")
                     response_data = _summarize_graphql_data(questions_data, "PendingApproval")
+                    logger.debug(f"Summarized data fields: {list(response_data[0].keys()) if response_data else []}")
 
                 return json.dumps({
                     "status": "success",
@@ -2048,6 +2066,39 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
             "error": str(e),
             "error_type": type(e).__name__
         }, indent=2)
+
+
+@with_function_logging
+@mcp.tool()
+async def get_approval_details(impersonate_user: str, workflow_step: str = None,
+                               omada_base_url: str = None, scope: str = None) -> str:
+    """
+    Get FULL approval details including technical IDs (surveyId, surveyObjectKey) needed for making decisions.
+
+    Use this function when you need to make an approval decision and need the technical IDs.
+    This returns all fields including surveyId and surveyObjectKey which are required for make_approval_decision.
+
+    IMPORTANT: This function requires 1 mandatory parameter.
+
+    REQUIRED PARAMETERS:
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+
+    Optional parameters:
+        workflow_step: Filter by workflow step (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
+        omada_base_url: Omada instance URL
+        scope: OAuth2 scope for the token
+
+    Returns:
+        JSON response with FULL approval details including surveyId and surveyObjectKey
+    """
+    # Call get_pending_approvals with summary_mode=False to get all fields
+    return await get_pending_approvals(
+        impersonate_user=impersonate_user,
+        workflow_step=workflow_step,
+        summary_mode=False,  # Get full details including technical IDs
+        omada_base_url=omada_base_url,
+        scope=scope
+    )
 
 
 @with_function_logging

@@ -188,14 +188,24 @@ python server.py
   - **Required**: `impersonate_user`, `reason`, `context`, `resources`
   - **Optional**: `valid_from`, `valid_to`
 
-- **`get_pending_approvals`** - Get pending approval survey questions
+- **`get_pending_approvals`** - Get pending approval survey questions (summary mode)
   - **Required**: `impersonate_user`
-  - **Optional**: `workflow_step` (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
+  - **Optional**: `workflow_step` (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval"), `summary_mode` (default: True)
+  - Returns user-friendly summary: workflowStep, workflowStepTitle, reason
+  - Excludes technical fields: surveyId, surveyObjectKey
+  - Uses GraphQL API version 3.0
+
+- **`get_approval_details`** - Get FULL approval details including technical IDs
+  - **Required**: `impersonate_user`
+  - **Optional**: `workflow_step`
+  - Returns ALL fields including surveyId and surveyObjectKey (needed for making decisions)
+  - Use this before calling `make_approval_decision` to get required IDs
   - Uses GraphQL API version 3.0
 
 - **`make_approval_decision`** - Make an approval decision (APPROVE or REJECT)
   - **Required**: `impersonate_user`, `survey_id`, `survey_object_key`, `decision`
   - `decision` must be either "APPROVE" or "REJECT"
+  - **Tip**: Call `get_approval_details` first to get survey_id and survey_object_key
   - Uses GraphQL API version 3.0
 
 ### Identity Context Functions
