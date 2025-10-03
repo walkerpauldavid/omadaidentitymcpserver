@@ -1,0 +1,16 @@
+query myAccessRequestApprovalSurveyQuestions {
+  accessRequestApprovalSurveyQuestions(
+    filters: {workflowStep: {filterValue: "ResourceOwnerApproval", operator: EQUALS}}
+  ) {
+    pages
+    total
+    data {
+      reason
+      surveyId
+      surveyObjectKey
+      workflowStep
+      history
+      workflowStepTitle
+    }
+  }
+}
