@@ -213,6 +213,53 @@ def _summarize_entities(data: dict, entity_type: str) -> dict:
     return result
 
 
+def _summarize_graphql_data(data: list, data_type: str) -> list:
+    """
+    Create a summarized version of GraphQL response data with only key fields.
+
+    Args:
+        data: List of GraphQL response objects
+        data_type: Type of data being summarized (e.g., "PendingApproval", "AccessRequest")
+
+    Returns:
+        Summarized data with key fields only
+    """
+    if not data or not isinstance(data, list):
+        return data
+
+    # Define key fields for each GraphQL data type
+    summary_fields = {
+        "PendingApproval": ["workflowStep", "workflowStepTitle", "reason"],
+        "AccessRequest": ["id", "beneficiary", "resource", "status"],
+        "CalculatedAssignment": ["complianceStatus", "account", "resource", "identity"],
+        "Context": ["id", "displayName", "type"],
+        "Resource": ["id", "name", "description", "system"]
+    }
+
+    # Get relevant fields for this data type
+    fields_to_keep = summary_fields.get(data_type, ["id", "name"])
+
+    summarized = []
+    for item in data:
+        summary = {}
+        for field in fields_to_keep:
+            if field in item:
+                value = item[field]
+                # Truncate long text fields
+                if isinstance(value, str) and len(value) > 100:
+                    summary[field] = value[:97] + "..."
+                else:
+                    summary[field] = value
+
+        # Always include id if available and not already in summary
+        if "id" in item and "id" not in summary:
+            summary["id"] = item["id"]
+
+        summarized.append(summary)
+
+    return summarized
+
+
 class AzureOAuth2Client:
     def __init__(self):
         self.tenant_id = os.getenv("TENANT_ID")
@@ -319,7 +366,7 @@ async def query_omada_entity(entity_type: str = "Identity",
                             omada_base_url: str = None,
                             scope: str = None,
                             count_only: bool = False,
-                            summary_mode: bool = False,
+                            summary_mode: bool = True,
                             top: int = None,
                             skip: int = None,
                             select_fields: str = None,
@@ -572,7 +619,7 @@ async def query_omada_identity(field_filters: list = None,
                               scope: str = None,
                               filter_condition: str = None,
                               count_only: bool = False,
-                              summary_mode: bool = False,
+                              summary_mode: bool = True,
                               top: int = None,
                               skip: int = None,
                               select_fields: str = None,
@@ -991,13 +1038,16 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
 
 @with_function_logging
 @mcp.tool()
-async def get_access_requests(impersonate_user: str, filter_field: str = None, filter_value: str = None) -> str:
+async def get_access_requests(impersonate_user: str, filter_field: str = None, filter_value: str = None,
+                              summary_mode: bool = True) -> str:
     """Get access requests from Omada GraphQL API using user impersonation.
 
     Args:
         impersonate_user: Email address of the user to impersonate (e.g., user@domain.com)
         filter_field: Optional filter field name (e.g., "beneficiaryId", "identityId", "status")
         filter_value: Optional filter value
+        summary_mode: If True (default), returns only key fields (id, beneficiary, resource, status)
+                     If False, returns all fields
 
     Returns:
         JSON string containing access requests data
@@ -1064,15 +1114,21 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
                 total = access_requests_obj.get('total', 0)
                 access_requests = access_requests_obj.get('data', [])
 
+                # Apply summarization if requested
+                response_data = access_requests
+                if summary_mode:
+                    response_data = _summarize_graphql_data(access_requests, "AccessRequest")
+
                 formatted_result = {
                     "status": "success",
                     "impersonated_user": impersonate_user,
                     "total_requests": total,
-                    "requests_returned": len(access_requests),
+                    "requests_returned": len(response_data),
                     "filter_applied": f"{filter_field}={filter_value}" if filter_field else "none",
+                    "summary_mode": summary_mode,
                     "endpoint": result["endpoint"],
                     "data": {
-                        "access_requests": access_requests
+                        "access_requests": response_data
                     }
                 }
 
@@ -1845,6 +1901,7 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
 @with_function_logging
 @mcp.tool()
 async def get_pending_approvals(impersonate_user: str, workflow_step: str = None,
+                                summary_mode: bool = True,
                                 omada_base_url: str = None, scope: str = None) -> str:
     """
     Get pending approval survey questions from Omada GraphQL API.
@@ -1859,6 +1916,8 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
     Optional parameters:
         workflow_step: Filter by workflow step (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
                       If not provided, returns all pending approvals
+        summary_mode: If True (default), returns only key fields (workflowStep, workflowStepTitle, reason)
+                     If False, returns all fields including surveyId and surveyObjectKey
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
 
@@ -1939,14 +1998,20 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
                 total = approval_questions.get('total', 0)
                 pages = approval_questions.get('pages', 0)
 
+                # Apply summarization if requested
+                response_data = questions_data
+                if summary_mode:
+                    response_data = _summarize_graphql_data(questions_data, "PendingApproval")
+
                 return json.dumps({
                     "status": "success",
                     "impersonated_user": impersonate_user,
                     "workflow_step_filter": workflow_step if workflow_step else "none",
                     "total_approvals": total,
                     "pages": pages,
-                    "approvals_returned": len(questions_data),
-                    "approvals": questions_data,
+                    "approvals_returned": len(response_data),
+                    "summary_mode": summary_mode,
+                    "approvals": response_data,
                     "endpoint": result["endpoint"]
                 }, indent=2)
             else:
