@@ -1842,6 +1842,149 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
         }, indent=2)
 
 
+@with_function_logging
+@mcp.tool()
+async def get_pending_approvals(impersonate_user: str, workflow_step: str = None,
+                                omada_base_url: str = None, scope: str = None) -> str:
+    """
+    Get pending approval survey questions from Omada GraphQL API.
+
+    IMPORTANT: This function requires 1 mandatory parameter. If missing,
+    you MUST prompt the user to provide it before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+
+    Optional parameters:
+        workflow_step: Filter by workflow step (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
+                      If not provided, returns all pending approvals
+        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
+        scope: OAuth2 scope for the token
+
+    Returns:
+        JSON response with pending approval survey questions or error message
+    """
+    try:
+        # Validate mandatory fields
+        if not impersonate_user or not impersonate_user.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: impersonate_user",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Validate workflow_step if provided
+        valid_workflow_steps = ["ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval"]
+        if workflow_step and workflow_step not in valid_workflow_steps:
+            return json.dumps({
+                "status": "error",
+                "message": f"Invalid workflow_step '{workflow_step}'. Must be one of: {', '.join(valid_workflow_steps)}",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Build GraphQL query
+        if workflow_step:
+            # With filter
+            query = f"""query myAccessRequestApprovalSurveyQuestions {{
+  accessRequestApprovalSurveyQuestions(
+    filters: {{workflowStep: {{filterValue: "{workflow_step}", operator: EQUALS}}}}
+  ) {{
+    pages
+    total
+    data {{
+      reason
+      surveyId
+      surveyObjectKey
+      workflowStep
+      history
+      workflowStepTitle
+    }}
+  }}
+}}"""
+        else:
+            # Without filter - get all pending approvals
+            query = """query myAccessRequestApprovalSurveyQuestions {
+  accessRequestApprovalSurveyQuestions {
+    pages
+    total
+    data {
+      reason
+      surveyId
+      surveyObjectKey
+      workflowStep
+      history
+      workflowStepTitle
+    }
+  }
+}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.0
+        result = await _execute_graphql_request(
+            query,
+            impersonate_user,
+            omada_base_url,
+            scope,
+            graphql_version="3.0"
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract approval questions from the GraphQL response
+            if ('data' in data and 'accessRequestApprovalSurveyQuestions' in data['data']):
+                approval_questions = data['data']['accessRequestApprovalSurveyQuestions']
+                questions_data = approval_questions.get('data', [])
+                total = approval_questions.get('total', 0)
+                pages = approval_questions.get('pages', 0)
+
+                return json.dumps({
+                    "status": "success",
+                    "impersonated_user": impersonate_user,
+                    "workflow_step_filter": workflow_step if workflow_step else "none",
+                    "total_approvals": total,
+                    "pages": pages,
+                    "approvals_returned": len(questions_data),
+                    "approvals": questions_data,
+                    "endpoint": result["endpoint"]
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "no_approvals",
+                    "impersonated_user": impersonate_user,
+                    "workflow_step_filter": workflow_step if workflow_step else "none",
+                    "message": "No pending approvals found in response",
+                    "response": data
+                }, indent=2)
+        else:
+            # Handle GraphQL request failure
+            error_result = {
+                "status": "error",
+                "impersonated_user": impersonate_user,
+                "workflow_step_filter": workflow_step if workflow_step else "none",
+                "error_type": result.get("error_type", "GraphQLError")
+            }
+
+            if "status_code" in result:
+                error_result["status_code"] = result["status_code"]
+            if "error" in result:
+                error_result["error"] = result["error"]
+            if "endpoint" in result:
+                error_result["endpoint"] = result["endpoint"]
+
+            return json.dumps(error_result, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "exception",
+            "impersonated_user": impersonate_user,
+            "workflow_step_filter": workflow_step if workflow_step else "none",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }, indent=2)
+
+
 async def test_token_locally():
     """Test function to run locally and see token output"""
     global _cached_token

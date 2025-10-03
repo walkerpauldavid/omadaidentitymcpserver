@@ -94,6 +94,7 @@ LOG_LEVEL_get_resources_for_beneficiary=DEBUG
 LOG_LEVEL_get_calculated_assignments_detailed=DEBUG
 LOG_LEVEL_create_access_request=DEBUG
 LOG_LEVEL_get_access_requests=INFO
+LOG_LEVEL_get_pending_approvals=INFO
 
 # Core Query Functions
 LOG_LEVEL_query_omada_entity=INFO
@@ -185,6 +186,11 @@ python server.py
 - **`create_access_request`** - Create new access request
   - **Required**: `impersonate_user`, `reason`, `context`, `resources`
   - **Optional**: `valid_from`, `valid_to`
+
+- **`get_pending_approvals`** - Get pending approval survey questions
+  - **Required**: `impersonate_user`
+  - **Optional**: `workflow_step` (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
+  - Uses GraphQL API version 3.0
 
 ### Identity Context Functions
 
