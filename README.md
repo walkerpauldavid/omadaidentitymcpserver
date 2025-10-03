@@ -43,7 +43,7 @@ The `.env` file contains sensitive credentials and is **not included in the repo
 
 1. **Create the .env file** in the project root directory:
    ```bash
-   cd helloWorldServer
+   cd omada_mcp_server
    touch .env    # On Linux/Mac
    # Or create manually on Windows
    ```
@@ -267,7 +267,7 @@ Example log output:
 ## Project Structure
 
 ```
-helloWorldServer/
+omada_mcp_server/
  server.py                          # Main MCP server implementation
  .env                               # Environment configuration (not in git)
  .gitignore                        # Git ignore rules

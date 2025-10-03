@@ -17,9 +17,15 @@ load_dotenv()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE = os.getenv("LOG_FILE", "omada_mcp_server.log")
 
+# Convert to absolute path if relative path provided
+if not os.path.isabs(LOG_FILE):
+    # Use the directory where this script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    LOG_FILE = os.path.join(script_dir, LOG_FILE)
+
 # Create logs directory if it doesn't exist
-log_dir = os.path.dirname(LOG_FILE) if os.path.dirname(LOG_FILE) else "."
-if log_dir != "." and not os.path.exists(log_dir):
+log_dir = os.path.dirname(LOG_FILE)
+if log_dir and not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
 # Configure logging with both file and console handlers
@@ -839,6 +845,7 @@ async def count_omada_identities(filter_condition: str = None,
 @with_function_logging
 @mcp.tool()
 def ping() -> str:
+    logger.info("Ping function called - responding with pong")
     return "pong"
 
 @with_function_logging
