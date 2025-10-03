@@ -95,6 +95,7 @@ LOG_LEVEL_get_calculated_assignments_detailed=DEBUG
 LOG_LEVEL_create_access_request=DEBUG
 LOG_LEVEL_get_access_requests=INFO
 LOG_LEVEL_get_pending_approvals=INFO
+LOG_LEVEL_make_approval_decision=INFO
 
 # Core Query Functions
 LOG_LEVEL_query_omada_entity=INFO
@@ -190,6 +191,11 @@ python server.py
 - **`get_pending_approvals`** - Get pending approval survey questions
   - **Required**: `impersonate_user`
   - **Optional**: `workflow_step` (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
+  - Uses GraphQL API version 3.0
+
+- **`make_approval_decision`** - Make an approval decision (APPROVE or REJECT)
+  - **Required**: `impersonate_user`, `survey_id`, `survey_object_key`, `decision`
+  - `decision` must be either "APPROVE" or "REJECT"
   - Uses GraphQL API version 3.0
 
 ### Identity Context Functions

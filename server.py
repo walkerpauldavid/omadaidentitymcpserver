@@ -1985,6 +1985,167 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
         }, indent=2)
 
 
+@with_function_logging
+@mcp.tool()
+async def make_approval_decision(impersonate_user: str, survey_id: str,
+                                 survey_object_key: str, decision: str,
+                                 omada_base_url: str = None, scope: str = None) -> str:
+    """
+    Make an approval decision (APPROVE or REJECT) for an access request using Omada GraphQL API.
+
+    IMPORTANT: This function requires 4 mandatory parameters. If any are missing,
+    you MUST prompt the user to provide them before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        survey_id: The survey ID for the approval (e.g., "d67d8182-5d9e-466d-b9c2-d499a095e06a")
+                  PROMPT: "Please provide the survey ID"
+        survey_object_key: The survey object key for the approval (e.g., "40501018-04D0-4C67-A4BD-E698C109B60C")
+                          PROMPT: "Please provide the survey object key"
+        decision: The approval decision - must be either "APPROVE" or "REJECT"
+                 PROMPT: "Please provide the decision (APPROVE or REJECT)"
+
+    Optional parameters:
+        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
+        scope: OAuth2 scope for the token
+
+    Returns:
+        JSON response with approval submission result or error message
+    """
+    try:
+        # Validate mandatory fields
+        if not impersonate_user or not impersonate_user.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: impersonate_user",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        if not survey_id or not survey_id.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: survey_id",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        if not survey_object_key or not survey_object_key.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: survey_object_key",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        if not decision or not decision.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: decision",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Validate decision value
+        valid_decisions = ["APPROVE", "REJECT"]
+        decision_upper = decision.strip().upper()
+        if decision_upper not in valid_decisions:
+            return json.dumps({
+                "status": "error",
+                "message": f"Invalid decision '{decision}'. Must be one of: {', '.join(valid_decisions)}",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Build GraphQL mutation
+        mutation = f"""mutation makeApprovalDecision {{
+  submitRequestQuestions(
+    submitRequestQuestionsInput: {{
+      accessApprovals: {{surveyId: "{survey_id}",
+        questions: {{
+          surveyObjectKey: "{survey_object_key}", decision: {decision_upper}}}}}
+  ) {{
+    questionsSuccessfullySubmitted
+  }}
+}}"""
+
+        logger.debug(f"GraphQL mutation: {mutation}")
+
+        # Execute GraphQL request with version 3.0
+        result = await _execute_graphql_request(
+            query=mutation,
+            impersonate_user=impersonate_user,
+            omada_base_url=omada_base_url,
+            scope=scope,
+            graphql_version="3.0"
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract submission result from the GraphQL response
+            if ('data' in data and 'submitRequestQuestions' in data['data']):
+                submission_result = data['data']['submitRequestQuestions']
+                questions_submitted = submission_result.get('questionsSuccessfullySubmitted', False)
+
+                return json.dumps({
+                    "status": "success",
+                    "impersonated_user": impersonate_user,
+                    "survey_id": survey_id,
+                    "survey_object_key": survey_object_key,
+                    "decision": decision_upper,
+                    "questions_successfully_submitted": questions_submitted,
+                    "endpoint": result["endpoint"]
+                }, indent=2)
+            elif "errors" in data:
+                # Handle GraphQL errors
+                return json.dumps({
+                    "status": "error",
+                    "message": "GraphQL mutation failed",
+                    "impersonated_user": impersonate_user,
+                    "survey_id": survey_id,
+                    "survey_object_key": survey_object_key,
+                    "decision": decision_upper,
+                    "errors": data["errors"],
+                    "endpoint": result["endpoint"]
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "error",
+                    "message": "Unexpected response format from submitRequestQuestions",
+                    "impersonated_user": impersonate_user,
+                    "survey_id": survey_id,
+                    "survey_object_key": survey_object_key,
+                    "decision": decision_upper,
+                    "response": data
+                }, indent=2)
+        else:
+            # Handle GraphQL request failure
+            error_result = {
+                "status": "error",
+                "impersonated_user": impersonate_user,
+                "survey_id": survey_id,
+                "survey_object_key": survey_object_key,
+                "decision": decision_upper,
+                "error_type": result.get("error_type", "GraphQLError")
+            }
+
+            if "status_code" in result:
+                error_result["status_code"] = result["status_code"]
+            if "error" in result:
+                error_result["error"] = result["error"]
+            if "endpoint" in result:
+                error_result["endpoint"] = result["endpoint"]
+
+            return json.dumps(error_result, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "exception",
+            "impersonated_user": impersonate_user,
+            "survey_id": survey_id if 'survey_id' in locals() else "N/A",
+            "survey_object_key": survey_object_key if 'survey_object_key' in locals() else "N/A",
+            "decision": decision if 'decision' in locals() else "N/A",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }, indent=2)
+
+
 async def test_token_locally():
     """Test function to run locally and see token output"""
     global _cached_token
