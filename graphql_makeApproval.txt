@@ -1,0 +1,14 @@
+mutation makeApprovalDecision {
+  submitRequestQuestions(
+    submitRequestQuestionsInput: {
+      accessApprovals: {
+        questions: 
+        {
+          decision: APPROVE, 
+          surveyObjectKey: "40501018-04D0-4C67-A4BD-E698C109B60C"}, 
+          surveyId: "d67d8182-5d9e-466d-b9c2-d499a095e06a"}
+        }
+  ) {
+    questionsSuccessfullySubmitted
+  }
+}

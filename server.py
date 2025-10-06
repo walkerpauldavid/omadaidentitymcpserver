@@ -2173,9 +2173,12 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
         mutation = f"""mutation makeApprovalDecision {{
   submitRequestQuestions(
     submitRequestQuestionsInput: {{
-      accessApprovals: {{surveyId: "{survey_id}",
+      accessApprovals: {{
         questions: {{
-          surveyObjectKey: "{survey_object_key}", decision: {decision_upper}}}}}
+          decision: {decision_upper},
+          surveyObjectKey: "{survey_object_key}"}},
+          surveyId: "{survey_id}"}}
+        }}
   ) {{
     questionsSuccessfullySubmitted
   }}
