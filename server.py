@@ -353,25 +353,116 @@ except ValueError as e:
     logger.warning(f"OAuth2 client initialization failed: {e}")
     oauth_client = None
 
+async def get_token_from_device_code_file() -> Dict[str, Any]:
+    """
+    Get bearer token from device code authentication file.
+
+    Returns:
+        Dict containing token information with access_token and expires_at
+
+    Raises:
+        Exception if token file not found or invalid
+    """
+    token_file = os.getenv("DEVICE_CODE_TOKEN_FILE", "bearer_token.txt")
+
+    # Convert to absolute path if relative
+    if not os.path.isabs(token_file):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        token_file = os.path.join(script_dir, token_file)
+
+    if not os.path.exists(token_file):
+        raise Exception(
+            f"Device code token file not found: {token_file}\n"
+            f"Please run device authentication flow first using the device_auth_mcp_server"
+        )
+
+    try:
+        with open(token_file, 'r') as f:
+            token_data = json.load(f)
+
+        # Validate token structure
+        if "access_token" not in token_data:
+            raise Exception("Invalid token file: missing access_token field")
+
+        # Calculate expires_at if not present
+        if "expires_at" not in token_data:
+            if "expires_in" in token_data:
+                # Assume token was just created
+                expires_in = token_data.get("expires_in", 3600)
+                token_data["expires_at"] = datetime.now() + timedelta(seconds=expires_in - 300)  # 5 min buffer
+            else:
+                # Default to 1 hour expiry with 5 min buffer
+                token_data["expires_at"] = datetime.now() + timedelta(seconds=3300)
+        elif isinstance(token_data["expires_at"], str):
+            # Convert string timestamp to datetime if needed
+            token_data["expires_at"] = datetime.fromisoformat(token_data["expires_at"])
+
+        logger.debug(f"Loaded device code token from {token_file}")
+        return token_data
+
+    except json.JSONDecodeError as e:
+        raise Exception(f"Invalid JSON in token file {token_file}: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Error reading device code token file: {str(e)}")
+
 async def get_cached_token(scope: str = None) -> Dict[str, Any]:
-    """Get a cached token or fetch a new one if expired."""
+    """
+    Get a cached token or fetch a new one if expired.
+
+    Uses AUTH_METHOD environment variable to determine authentication flow:
+    - CLIENT_CREDENTIALS: OAuth 2.0 Client Credentials flow (default)
+    - DEVICE_CODE: User delegated token (bearer_token parameter required)
+
+    Args:
+        scope: OAuth2 scope for the token
+
+    Returns:
+        Dict containing token information with access_token
+
+    Raises:
+        Exception if AUTH_METHOD=DEVICE_CODE (token must be passed as parameter)
+    """
     global _cached_token
-    
-    if oauth_client is None:
-        raise Exception("OAuth2 client not initialized. Check environment variables.")
-    
+
+    # Get authentication method from environment
+    auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
+
     # Use environment variable scope if none provided
     if scope is None:
         scope = os.getenv("OAUTH2_SCOPE", "https://graph.microsoft.com/.default")
-    
+
     # Check if we have a valid cached token
-    if (_cached_token and 
-        "expires_at" in _cached_token and 
+    if (_cached_token and
+        "expires_at" in _cached_token and
         datetime.now() < _cached_token["expires_at"]):
+        logger.debug(f"Using cached token (auth_method={auth_method})")
         return _cached_token
-    
-    # Fetch new token
-    _cached_token = await oauth_client.get_access_token(scope)
+
+    logger.info(f"Token expired or not cached, acquiring new token using {auth_method}")
+
+    # Fetch new token based on auth method
+    if auth_method == "DEVICE_CODE":
+        raise Exception(
+            "AUTH_METHOD is set to DEVICE_CODE - automatic token acquisition is disabled.\n"
+            "Device Code flow requires user delegated authentication.\n"
+            "Please pass the bearer_token parameter directly to the function.\n\n"
+            "Workflow:\n"
+            "1. Run 'start device authentication' to get user code\n"
+            "2. Complete authentication at microsoft.com/devicelogin\n"
+            "3. Run 'complete device authentication' to get bearer token\n"
+            "4. Pass token to function: get_pending_approvals(impersonate_user='user@domain.com', bearer_token='eyJ0...')"
+        )
+    elif auth_method == "CLIENT_CREDENTIALS":
+        logger.info("Using Client Credentials authentication flow")
+        if oauth_client is None:
+            raise Exception("OAuth2 client not initialized. Check environment variables.")
+        _cached_token = await oauth_client.get_access_token(scope)
+    else:
+        raise Exception(
+            f"Invalid AUTH_METHOD '{auth_method}'. "
+            f"Must be 'CLIENT_CREDENTIALS' or 'DEVICE_CODE'"
+        )
+
     return _cached_token
 
 @with_function_logging
@@ -387,7 +478,9 @@ async def query_omada_entity(entity_type: str = "Identity",
                             select_fields: str = None,
                             order_by: str = None,
                             expand: str = None,
-                            include_count: bool = False) -> str:
+                            include_count: bool = False,
+                            bearer_token: str = None,
+                            impersonate_user: str = None) -> str:
     """
     Generic query function for any Omada entity type (Identity, Resource, Role, etc).
 
@@ -412,6 +505,8 @@ async def query_omada_entity(entity_type: str = "Identity",
         order_by: Field(s) to order by (OData $orderby)
         expand: Comma-separated list of related entities to expand (OData $expand)
         include_count: Include total count in response (adds $count=true)
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+        impersonate_user: Optional email address for user impersonation (required for user-delegated tokens)
 
     Examples:
         # Simple field filter
@@ -548,17 +643,46 @@ async def query_omada_entity(entity_type: str = "Identity",
         if query_params:
             query_string = urllib.parse.urlencode(query_params)
             endpoint_url = f"{endpoint_url}?{query_string}"
-        
-        # Get the Azure token
-        token_data = await get_cached_token(scope)
-        bearer_token = f"Bearer {token_data['access_token']}"
-        
+
+        # Check if AUTH_METHOD requires bearer_token
+        auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
+
+        # Get the Azure token - use provided token or acquire new one
+        if bearer_token:
+            logger.debug("Using provided bearer token for OData request")
+            # Strip "Bearer " prefix if already present to avoid double-prefix
+            clean_token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
+            auth_header = f"Bearer {clean_token}"
+        else:
+            # If AUTH_METHOD is DEVICE_CODE, bearer_token is mandatory
+            if auth_method == "DEVICE_CODE":
+                raise Exception(
+                    "bearer_token parameter is required when AUTH_METHOD=DEVICE_CODE.\n"
+                    "Device Code flow requires user delegated authentication.\n\n"
+                    "Workflow:\n"
+                    "1. Run 'start device authentication' to get user code\n"
+                    "2. Complete authentication at microsoft.com/devicelogin\n"
+                    "3. Run 'complete device authentication' to get bearer token\n"
+                    "4. Pass token to this function using bearer_token parameter\n\n"
+                    "Example: bearer_token='eyJ0eXAiOiJKV1QiLCJhbGc...'"
+                )
+
+            logger.debug("Acquiring new bearer token for OData request via OAuth")
+            token_data = await get_cached_token(scope)
+            auth_header = f"Bearer {token_data['access_token']}"
+
         # Make API call to Omada
         headers = {
-            "Authorization": bearer_token,
+            "Authorization": auth_header,
             "Content-Type": "application/json",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
+
+        # Add impersonate_user header if provided (required for user-delegated tokens like device code)
+        if impersonate_user:
+            headers["impersonate_user"] = impersonate_user
+            logger.debug(f"Using impersonate_user: {impersonate_user}")
         
         async with httpx.AsyncClient() as client:
             response = await client.get(endpoint_url, headers=headers, timeout=30.0)
@@ -639,10 +763,11 @@ async def query_omada_identity(field_filters: list = None,
                               skip: int = None,
                               select_fields: str = None,
                               order_by: str = None,
-                              include_count: bool = False) -> str:
+                              include_count: bool = False,
+                              bearer_token: str = None) -> str:
     """
     Query Omada Identity entities (wrapper for query_omada_entity).
-    
+
     Args:
         field_filters: List of field filters:
                       [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
@@ -656,7 +781,8 @@ async def query_omada_identity(field_filters: list = None,
         select_fields: Comma-separated list of fields to select
         order_by: Field(s) to order by
         include_count: Include total count in response
-        
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
     Returns:
         JSON response with identity data or error message
     """
@@ -678,7 +804,8 @@ async def query_omada_identity(field_filters: list = None,
         skip=skip,
         select_fields=select_fields,
         order_by=order_by,
-        include_count=include_count
+        include_count=include_count,
+        bearer_token=bearer_token
     )
 
 @with_function_logging
@@ -694,8 +821,22 @@ async def query_omada_resources(resource_type_id: int = None,
                                skip: int = None,
                                select_fields: str = None,
                                order_by: str = None,
-                               include_count: bool = False) -> str:
+                               include_count: bool = False,
+                               bearer_token: str = None) -> str:
     """
+    Query Omada Resource entities using OData API (for ADMINISTRATIVE queries only).
+
+    WARNING: DO NOT USE THIS for access request workflows!
+    - This function does NOT scope resources to user permissions
+    - This does NOT show what a user can request
+    - For access requests, use get_requestable_resources or get_resources_for_beneficiary instead
+
+    USE THIS FUNCTION for:
+    - Administrative resource queries
+    - Bulk resource reports
+    - System-level resource inventory
+    - Resource type analysis
+
     Query Omada Resource entities (wrapper for query_omada_entity).
     
     Args:
@@ -711,7 +852,8 @@ async def query_omada_resources(resource_type_id: int = None,
         select_fields: Comma-separated list of fields to select
         order_by: Field(s) to order by
         include_count: Include total count in response
-        
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
     Returns:
         JSON response with resource data or error message
     """
@@ -736,7 +878,8 @@ async def query_omada_resources(resource_type_id: int = None,
         skip=skip,
         select_fields=select_fields,
         order_by=order_by,
-        include_count=include_count
+        include_count=include_count,
+        bearer_token=bearer_token
     )
 
 @with_function_logging
@@ -752,10 +895,11 @@ async def query_omada_entities(entity_type: str = "Identity",
                               select_fields: str = None,
                               order_by: str = None,
                               expand: str = None,
-                              include_count: bool = False) -> str:
+                              include_count: bool = False,
+                              bearer_token: str = None) -> str:
     """
     Modern generic query function for Omada entities using field filters.
-    
+
     Args:
         entity_type: Type of entity to query (Identity, Resource, System, etc)
         field_filters: List of field filters:
@@ -771,7 +915,8 @@ async def query_omada_entities(entity_type: str = "Identity",
         order_by: Field(s) to order by
         expand: Comma-separated list of related entities to expand
         include_count: Include total count in response
-        
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
     Returns:
         JSON response with entity data or error message
     """
@@ -793,7 +938,8 @@ async def query_omada_entities(entity_type: str = "Identity",
         select_fields=select_fields,
         order_by=order_by,
         expand=expand,
-        include_count=include_count
+        include_count=include_count,
+        bearer_token=bearer_token
     )
 
 @with_function_logging
@@ -807,10 +953,11 @@ async def query_calculated_assignments(identity_id: int = None,
                                       top: int = None,
                                       skip: int = None,
                                       order_by: str = None,
-                                      include_count: bool = False) -> str:
+                                      include_count: bool = False,
+                                      bearer_token: str = None) -> str:
     """
     Query Omada CalculatedAssignments entities (wrapper for query_omada_entity).
-    
+
     Args:
         identity_id: Numeric ID for identity to get assignments for (e.g., 1006500)
         select_fields: Fields to select (default: "AssignmentKey,AccountName")
@@ -822,7 +969,8 @@ async def query_calculated_assignments(identity_id: int = None,
         skip: Number of records to skip
         order_by: Field(s) to order by
         include_count: Include total count in response
-        
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
     Returns:
         JSON response with calculated assignments data or error message
     """
@@ -843,7 +991,8 @@ async def query_calculated_assignments(identity_id: int = None,
         select_fields=select_fields,
         order_by=order_by,
         expand=expand,
-        include_count=include_count
+        include_count=include_count,
+        bearer_token=bearer_token
     )
 
 @with_function_logging
@@ -854,10 +1003,11 @@ async def get_all_omada_identities(omada_base_url: str = None,
                                   skip: int = None,
                                   select_fields: str = None,
                                   order_by: str = None,
-                                  include_count: bool = True) -> str:
+                                  include_count: bool = True,
+                                  bearer_token: str = None) -> str:
     """
     Retrieve all identities from Omada Identity system with pagination support.
-    
+
     Args:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
@@ -866,7 +1016,8 @@ async def get_all_omada_identities(omada_base_url: str = None,
         select_fields: Comma-separated list of fields to select
         order_by: Field(s) to order by
         include_count: Include total count in response
-        
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
     Returns:
         JSON response with all identity data or error message
     """
@@ -878,22 +1029,25 @@ async def get_all_omada_identities(omada_base_url: str = None,
         select_fields=select_fields,
         order_by=order_by,
         filter_condition=None,  # No filter to get all
-        include_count=include_count
+        include_count=include_count,
+        bearer_token=bearer_token
     )
 
 @with_function_logging
 @mcp.tool()
 async def count_omada_identities(filter_condition: str = None,
                                 omada_base_url: str = None,
-                                scope: str = None) -> str:
+                                scope: str = None,
+                                bearer_token: str = None) -> str:
     """
     Count identities in Omada Identity system with optional filtering.
-    
+
     Args:
         filter_condition: OData filter condition (optional)
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
-        
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
     Returns:
         JSON response with count or error message
     """
@@ -901,7 +1055,8 @@ async def count_omada_identities(filter_condition: str = None,
         omada_base_url=omada_base_url,
         scope=scope,
         filter_condition=filter_condition,
-        count_only=True
+        count_only=True,
+        bearer_token=bearer_token
     )
 
 @with_function_logging
@@ -931,21 +1086,97 @@ async def get_azure_token(scope: str = None) -> str:
 
 @with_function_logging
 @mcp.tool()
+async def check_auth_config() -> str:
+    """
+    Check and display current authentication configuration.
+
+    Shows which authentication method is configured (CLIENT_CREDENTIALS or DEVICE_CODE)
+    and validates the configuration for that method.
+
+    Returns:
+        JSON string with authentication configuration details
+    """
+    try:
+        auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
+
+        config = {
+            "auth_method": auth_method,
+            "tenant_id": os.getenv("TENANT_ID", "NOT_SET"),
+            "client_id": os.getenv("CLIENT_ID", "NOT_SET"),
+            "oauth2_scope": os.getenv("OAUTH2_SCOPE", "NOT_SET"),
+        }
+
+        if auth_method == "CLIENT_CREDENTIALS":
+            config["client_secret_set"] = bool(os.getenv("CLIENT_SECRET"))
+            config["access_token_url"] = os.getenv("ACCESS_TOKEN_URL", "NOT_SET")
+
+            # Validate required settings
+            missing = []
+            if not os.getenv("CLIENT_SECRET"):
+                missing.append("CLIENT_SECRET")
+            if config["tenant_id"] == "NOT_SET":
+                missing.append("TENANT_ID")
+            if config["client_id"] == "NOT_SET":
+                missing.append("CLIENT_ID")
+
+            if missing:
+                config["status"] = "INVALID"
+                config["error"] = f"Missing required environment variables: {', '.join(missing)}"
+            else:
+                config["status"] = "VALID"
+
+        elif auth_method == "DEVICE_CODE":
+            config["status"] = "VALID"
+            config["note"] = "Device Code mode: Automatic token acquisition disabled. Must pass bearer_token parameter."
+            config["workflow"] = [
+                "1. Run 'start device authentication'",
+                "2. Complete authentication at microsoft.com/devicelogin",
+                "3. Run 'complete device authentication' to get token",
+                "4. Pass token as parameter to functions"
+            ]
+            config["usage_example"] = "get_pending_approvals(impersonate_user='user@domain.com', bearer_token='eyJ0...')"
+            config["token_source"] = "conversation_context (no file storage)"
+
+        else:
+            config["status"] = "INVALID"
+            config["error"] = f"Invalid AUTH_METHOD '{auth_method}'. Must be 'CLIENT_CREDENTIALS' or 'DEVICE_CODE'"
+
+        # Check if token is currently cached
+        config["token_cached"] = _cached_token is not None
+        if _cached_token and "expires_at" in _cached_token:
+            config["cached_token_expires_at"] = _cached_token["expires_at"].isoformat()
+            config["cached_token_valid"] = datetime.now() < _cached_token["expires_at"]
+
+        return json.dumps(config, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "ERROR",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }, indent=2)
+
+@with_function_logging
+@mcp.tool()
 async def get_azure_token_info(scope: str = None) -> str:
     """
     Get detailed Azure OAuth2 token information including expiry.
-    
+
     Args:
         scope: OAuth2 scope (default: Microsoft Graph API)
-        
+
     Returns:
         JSON string with token details
     """
     try:
         token_data = await get_cached_token(scope)
-        
+
+        # Get authentication method
+        auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
+
         # Prepare response data (excluding sensitive information)
         info = {
+            "auth_method": auth_method,
             "token_type": token_data.get("token_type", "Bearer"),
             "expires_in": token_data.get("expires_in"),
             "expires_at": token_data.get("expires_at").isoformat() if "expires_at" in token_data else None,
@@ -958,18 +1189,47 @@ async def get_azure_token_info(scope: str = None) -> str:
     except Exception as e:
         return f"Error getting token info: {str(e)}"
 
-async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = None, scope: str = None, graphql_version: str = None):
+async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = None, scope: str = None, graphql_version: str = None, bearer_token: str = None):
     """
     Prepare common GraphQL request components (URL, headers, token).
+
+    Args:
+        impersonate_user: User to impersonate in the request
+        omada_base_url: Base URL for Omada instance
+        scope: OAuth2 scope for token acquisition
+        graphql_version: GraphQL API version to use
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         tuple: (graphql_url, headers, token)
     """
-    # Get OAuth access token
-    token_info = await get_cached_token(scope)
-    token = token_info.get('access_token')
-    if not token:
-        raise Exception("Failed to obtain access token")
+    # Check if AUTH_METHOD requires bearer_token
+    auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
+
+    # Use provided bearer token or acquire new one
+    if bearer_token:
+        logger.debug("Using provided bearer token")
+        # Strip "Bearer " prefix if already present to avoid double-prefix
+        token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
+    else:
+        # If AUTH_METHOD is DEVICE_CODE, bearer_token is mandatory
+        if auth_method == "DEVICE_CODE":
+            raise Exception(
+                "bearer_token parameter is required when AUTH_METHOD=DEVICE_CODE.\n"
+                "Device Code flow requires user delegated authentication.\n\n"
+                "Workflow:\n"
+                "1. Run 'start device authentication' to get user code\n"
+                "2. Complete authentication at microsoft.com/devicelogin\n"
+                "3. Run 'complete device authentication' to get bearer token\n"
+                "4. Pass token to this function using bearer_token parameter\n\n"
+                "Example: bearer_token='eyJ0eXAiOiJKV1QiLCJhbGc...'"
+            )
+
+        logger.debug("Acquiring new bearer token via OAuth")
+        token_info = await get_cached_token(scope)
+        token = token_info.get('access_token')
+        if not token:
+            raise Exception("Failed to obtain access token")
 
     # Get base URL from parameter or environment
     if not omada_base_url:
@@ -989,16 +1249,27 @@ async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = 
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "impersonate_user": impersonate_user
+        "impersonate_user": impersonate_user,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
     return graphql_url, headers, token
 
 async def _execute_graphql_request(query: str, impersonate_user: str,
                                  omada_base_url: str = None, scope: str = None,
-                                 variables: dict = None, graphql_version: str = None) -> dict:
+                                 variables: dict = None, graphql_version: str = None,
+                                 bearer_token: str = None) -> dict:
     """
     Execute a GraphQL request with common setup and error handling.
+
+    Args:
+        query: GraphQL query string
+        impersonate_user: User to impersonate in the request
+        omada_base_url: Base URL for Omada instance
+        scope: OAuth2 scope for token acquisition
+        variables: Optional GraphQL variables
+        graphql_version: GraphQL API version to use
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         dict: Parsed response or error information
@@ -1006,7 +1277,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
     try:
         # Setup
         graphql_url, headers, token = await _prepare_graphql_request(
-            impersonate_user, omada_base_url, scope, graphql_version
+            impersonate_user, omada_base_url, scope, graphql_version, bearer_token
         )
 
         # Build payload
@@ -1054,7 +1325,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
 @with_function_logging
 @mcp.tool()
 async def get_access_requests(impersonate_user: str, filter_field: str = None, filter_value: str = None,
-                              summary_mode: bool = True) -> str:
+                              summary_mode: bool = True, bearer_token: str = None) -> str:
     """Get access requests from Omada GraphQL API using user impersonation.
 
     Args:
@@ -1063,6 +1334,7 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
         filter_value: Optional filter value
         summary_mode: If True (default), returns only key fields (id, beneficiary, resource, status)
                      If False, returns all fields
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON string containing access requests data
@@ -1119,7 +1391,7 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
 }"""
 
         # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user)
+        result = await _execute_graphql_request(query, impersonate_user, bearer_token=bearer_token)
 
         if result["success"]:
             data = result["data"]
@@ -1183,7 +1455,8 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
 @mcp.tool()
 async def create_access_request(impersonate_user: str, reason: str, context: str,
                               resources: str, valid_from: str = None, valid_to: str = None,
-                              omada_base_url: str = None, scope: str = None) -> str:
+                              omada_base_url: str = None, scope: str = None,
+                              bearer_token: str = None) -> str:
     """Create an access request using GraphQL mutation.
 
     IMPORTANT: This function requires 4 mandatory parameters. If any are missing,
@@ -1206,6 +1479,7 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
         valid_to: Optional valid to date/time
         omada_base_url: Optional Omada base URL (uses env var if not provided)
         scope: Optional OAuth scope (uses default if not provided)
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Logging:
         Log level controlled by LOG_LEVEL_create_access_request in .env file
@@ -1328,7 +1602,8 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
             impersonate_user=impersonate_user,
             omada_base_url=omada_base_url,
             scope=scope,
-            graphql_version="1.1"
+            graphql_version="1.1",
+            bearer_token=bearer_token
         )
 
         if result["success"]:
@@ -1490,16 +1765,27 @@ async def test_azure_token(api_endpoint: str = "https://graph.microsoft.com/v1.0
 @mcp.tool()
 async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                                        system_id: str = None, context_id: str = None,
-                                       omada_base_url: str = None, scope: str = None) -> str:
+                                       omada_base_url: str = None, scope: str = None,
+                                       bearer_token: str = None) -> str:
     """
-    Get resources available for a request beneficiary using Omada GraphQL API.
+    Get resources available for an ACCESS REQUEST for a specific user/identity using Omada GraphQL API.
+
+    USE THIS FUNCTION when user asks to:
+    - "list resources for access request"
+    - "what resources can I request"
+    - "show requestable resources"
+    - "resources I can request access to"
+    - "resources available for access request"
+
+    This is the CORRECT function for access request workflows.
+    DO NOT use query_omada_resources for access requests - it does not scope to user permissions.
 
     IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
     you MUST prompt the user to provide them before calling this function.
 
     REQUIRED PARAMETERS (prompt user if missing):
-        identity_id: The beneficiary identity ID (e.g., "e3e869c4-369a-476e-a969-d57059d0b1e4")
-                    PROMPT: "Please provide the beneficiary identity ID"
+        identity_id: The identity ID of the person requesting access (e.g., "e3e869c4-369a-476e-a969-d57059d0b1e4")
+                    PROMPT: "Please provide the identity ID"
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
 
@@ -1508,6 +1794,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         context_id: Context ID to filter resources by (e.g., "6dd03400-ddb5-4cc4-bfff-490d94b195a9")
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with resources data or error message
@@ -1559,7 +1846,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope)
+        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope, bearer_token=bearer_token)
 
         if result["success"]:
             data = result["data"]
@@ -1616,11 +1903,52 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
 
 @with_function_logging
 @mcp.tool()
+async def get_requestable_resources(identity_id: str, impersonate_user: str,
+                                   system_id: str = None, context_id: str = None,
+                                   omada_base_url: str = None, scope: str = None,
+                                   bearer_token: str = None) -> str:
+    """
+    Get resources that a user can request access to (alias for get_resources_for_beneficiary).
+
+    EASY-TO-USE function for ACCESS REQUEST workflows - no need to spell "beneficiary"!
+
+    USE THIS when user wants to:
+    - List resources they can request
+    - Find what resources are available for access request
+    - See requestable resources for a user
+
+    REQUIRED:
+        identity_id: The user's identity ID who wants to request access
+        impersonate_user: Email address to impersonate (e.g., "ROBWOL@54MV4C.ONMICROSOFT.COM")
+
+    OPTIONAL:
+        system_id: Filter by specific system
+        context_id: Filter by specific context
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
+    Returns:
+        JSON response with list of requestable resources
+    """
+    # This is just an alias that calls the main function
+    return await get_resources_for_beneficiary(
+        identity_id=identity_id,
+        impersonate_user=impersonate_user,
+        system_id=system_id,
+        context_id=context_id,
+        omada_base_url=omada_base_url,
+        scope=scope,
+        bearer_token=bearer_token
+    )
+
+
+@with_function_logging
+@mcp.tool()
 async def get_calculated_assignments_detailed(identity_id: str, impersonate_user: str,
                                              resource_type_name: str = None,
                                              compliance_status: str = None,
                                              omada_base_url: str = None,
-                                             scope: str = None) -> str:
+                                             scope: str = None,
+                                             bearer_token: str = None) -> str:
     """
     Get detailed calculated assignments with compliance and violation status using Omada GraphQL API.
 
@@ -1640,6 +1968,7 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
                           Uses CONTAINS operator if provided
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with detailed assignments including compliance status, violations, accounts, and resources
@@ -1748,7 +2077,8 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
             impersonate_user,
             omada_base_url,
             scope,
-            graphql_version="2.19"
+            graphql_version="2.19",
+            bearer_token=bearer_token
         )
 
         if result["success"]:
@@ -1811,7 +2141,8 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
 @with_function_logging
 @mcp.tool()
 async def get_identity_contexts(identity_id: str, impersonate_user: str,
-                               omada_base_url: str = None, scope: str = None) -> str:
+                               omada_base_url: str = None, scope: str = None,
+                               bearer_token: str = None) -> str:
     """
     Get contexts for a specific identity using Omada GraphQL API.
 
@@ -1827,6 +2158,7 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
     Optional parameters:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with contexts data or error message
@@ -1860,7 +2192,7 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
         logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope)
+        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope, bearer_token=bearer_token)
 
         if result["success"]:
             data = result["data"]
@@ -1917,7 +2249,8 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
 @mcp.tool()
 async def get_pending_approvals(impersonate_user: str, workflow_step: str = None,
                                 summary_mode: bool = True,
-                                omada_base_url: str = None, scope: str = None) -> str:
+                                omada_base_url: str = None, scope: str = None,
+                                bearer_token: str = None) -> str:
     """
     Get pending approval survey questions from Omada GraphQL API.
 
@@ -1935,6 +2268,7 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
                      If False, returns all fields including surveyId and surveyObjectKey
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with pending approval survey questions or error message
@@ -2001,7 +2335,8 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
             impersonate_user,
             omada_base_url,
             scope,
-            graphql_version="3.0"
+            graphql_version="3.0",
+            bearer_token=bearer_token
         )
 
         if result["success"]:
@@ -2071,7 +2406,8 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
 @with_function_logging
 @mcp.tool()
 async def get_approval_details(impersonate_user: str, workflow_step: str = None,
-                               omada_base_url: str = None, scope: str = None) -> str:
+                               omada_base_url: str = None, scope: str = None,
+                               bearer_token: str = None) -> str:
     """
     Get FULL approval details including technical IDs (surveyId, surveyObjectKey) needed for making decisions.
 
@@ -2087,6 +2423,7 @@ async def get_approval_details(impersonate_user: str, workflow_step: str = None,
         workflow_step: Filter by workflow step (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
         omada_base_url: Omada instance URL
         scope: OAuth2 scope for the token
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with FULL approval details including surveyId and surveyObjectKey
@@ -2097,7 +2434,8 @@ async def get_approval_details(impersonate_user: str, workflow_step: str = None,
         workflow_step=workflow_step,
         summary_mode=False,  # Get full details including technical IDs
         omada_base_url=omada_base_url,
-        scope=scope
+        scope=scope,
+        bearer_token=bearer_token
     )
 
 
@@ -2105,7 +2443,8 @@ async def get_approval_details(impersonate_user: str, workflow_step: str = None,
 @mcp.tool()
 async def make_approval_decision(impersonate_user: str, survey_id: str,
                                  survey_object_key: str, decision: str,
-                                 omada_base_url: str = None, scope: str = None) -> str:
+                                 omada_base_url: str = None, scope: str = None,
+                                 bearer_token: str = None) -> str:
     """
     Make an approval decision (APPROVE or REJECT) for an access request using Omada GraphQL API.
 
@@ -2125,6 +2464,7 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
     Optional parameters:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
+        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with approval submission result or error message
@@ -2192,7 +2532,8 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
             impersonate_user=impersonate_user,
             omada_base_url=omada_base_url,
             scope=scope,
-            graphql_version="3.0"
+            graphql_version="3.0",
+            bearer_token=bearer_token
         )
 
         if result["success"]:
