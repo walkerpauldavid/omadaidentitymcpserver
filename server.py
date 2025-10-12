@@ -275,195 +275,16 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
     return summarized
 
 
-class AzureOAuth2Client:
-    def __init__(self):
-        self.tenant_id = os.getenv("TENANT_ID")
-        self.client_id = os.getenv("CLIENT_ID")
-        self.client_secret = os.getenv("CLIENT_SECRET")
-        self.access_token_url = os.getenv("ACCESS_TOKEN_URL")
-        
-        # Validate required environment variables
-        if not all([self.tenant_id, self.client_id, self.client_secret]):
-            raise ValueError("Missing required environment variables: TENANT_ID, CLIENT_ID, CLIENT_SECRET")
-        
-        # If ACCESS_TOKEN_URL is not provided, construct the standard Azure endpoint
-        if not self.access_token_url:
-            self.access_token_url = f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
-    
-    async def get_access_token(self, scope: str = None) -> Dict[str, Any]:
-        """
-        Get an OAuth2 access token using client credentials flow.
-        
-        Args:
-            scope: The scope for the access token (default reads from OAUTH2_SCOPE env var)
-            
-        Returns:
-            Dict containing token information
-        """
-        # Use environment variable scope if none provided
-        if scope is None:
-            scope = os.getenv("OAUTH2_SCOPE", "api://08eeb6a4-4aee-406f-baa5-4922993f09f3/.default")
-        
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-        
-        data = {
-            "grant_type": "client_credentials",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-            "scope": scope
-        }
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.access_token_url,
-                    headers=headers,
-                    data=data,
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                
-                token_data = response.json()
-                
-                # Add expiry timestamp for caching
-                expires_in = token_data.get("expires_in", 3600)
-                token_data["expires_at"] = datetime.now() + timedelta(seconds=expires_in - 300)  # 5 min buffer
-                
-                return token_data
-                
-            except httpx.HTTPStatusError as e:
-                error_detail = ""
-                try:
-                    error_detail = e.response.json()
-                except:
-                    error_detail = e.response.text
-                
-                raise Exception(f"HTTP {e.response.status_code}: {error_detail}")
-            except Exception as e:
-                raise Exception(f"Token request failed: {str(e)}")
-
-# Initialize OAuth2 client and cached token
-_cached_token = None
-
-try:
-    oauth_client = AzureOAuth2Client()
-except ValueError as e:
-    logger.warning(f"OAuth2 client initialization failed: {e}")
-    oauth_client = None
-
-async def get_token_from_device_code_file() -> Dict[str, Any]:
-    """
-    Get bearer token from device code authentication file.
-
-    Returns:
-        Dict containing token information with access_token and expires_at
-
-    Raises:
-        Exception if token file not found or invalid
-    """
-    token_file = os.getenv("DEVICE_CODE_TOKEN_FILE", "bearer_token.txt")
-
-    # Convert to absolute path if relative
-    if not os.path.isabs(token_file):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        token_file = os.path.join(script_dir, token_file)
-
-    if not os.path.exists(token_file):
-        raise Exception(
-            f"Device code token file not found: {token_file}\n"
-            f"Please run device authentication flow first using the device_auth_mcp_server"
-        )
-
-    try:
-        with open(token_file, 'r') as f:
-            token_data = json.load(f)
-
-        # Validate token structure
-        if "access_token" not in token_data:
-            raise Exception("Invalid token file: missing access_token field")
-
-        # Calculate expires_at if not present
-        if "expires_at" not in token_data:
-            if "expires_in" in token_data:
-                # Assume token was just created
-                expires_in = token_data.get("expires_in", 3600)
-                token_data["expires_at"] = datetime.now() + timedelta(seconds=expires_in - 300)  # 5 min buffer
-            else:
-                # Default to 1 hour expiry with 5 min buffer
-                token_data["expires_at"] = datetime.now() + timedelta(seconds=3300)
-        elif isinstance(token_data["expires_at"], str):
-            # Convert string timestamp to datetime if needed
-            token_data["expires_at"] = datetime.fromisoformat(token_data["expires_at"])
-
-        logger.debug(f"Loaded device code token from {token_file}")
-        return token_data
-
-    except json.JSONDecodeError as e:
-        raise Exception(f"Invalid JSON in token file {token_file}: {str(e)}")
-    except Exception as e:
-        raise Exception(f"Error reading device code token file: {str(e)}")
-
-async def get_cached_token(scope: str = None) -> Dict[str, Any]:
-    """
-    Get a cached token or fetch a new one if expired.
-
-    Uses AUTH_METHOD environment variable to determine authentication flow:
-    - CLIENT_CREDENTIALS: OAuth 2.0 Client Credentials flow (default)
-    - DEVICE_CODE: User delegated token (bearer_token parameter required)
-
-    Args:
-        scope: OAuth2 scope for the token
-
-    Returns:
-        Dict containing token information with access_token
-
-    Raises:
-        Exception if AUTH_METHOD=DEVICE_CODE (token must be passed as parameter)
-    """
-    global _cached_token
-
-    # Get authentication method from environment
-    auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
-
-    # Use environment variable scope if none provided
-    if scope is None:
-        scope = os.getenv("OAUTH2_SCOPE", "https://graph.microsoft.com/.default")
-
-    # Check if we have a valid cached token
-    if (_cached_token and
-        "expires_at" in _cached_token and
-        datetime.now() < _cached_token["expires_at"]):
-        logger.debug(f"Using cached token (auth_method={auth_method})")
-        return _cached_token
-
-    logger.info(f"Token expired or not cached, acquiring new token using {auth_method}")
-
-    # Fetch new token based on auth method
-    if auth_method == "DEVICE_CODE":
-        raise Exception(
-            "AUTH_METHOD is set to DEVICE_CODE - automatic token acquisition is disabled.\n"
-            "Device Code flow requires user delegated authentication.\n"
-            "Please pass the bearer_token parameter directly to the function.\n\n"
-            "Workflow:\n"
-            "1. Run 'start device authentication' to get user code\n"
-            "2. Complete authentication at microsoft.com/devicelogin\n"
-            "3. Run 'complete device authentication' to get bearer token\n"
-            "4. Pass token to function: get_pending_approvals(impersonate_user='user@domain.com', bearer_token='eyJ0...')"
-        )
-    elif auth_method == "CLIENT_CREDENTIALS":
-        logger.info("Using Client Credentials authentication flow")
-        if oauth_client is None:
-            raise Exception("OAuth2 client not initialized. Check environment variables.")
-        _cached_token = await oauth_client.get_access_token(scope)
-    else:
-        raise Exception(
-            f"Invalid AUTH_METHOD '{auth_method}'. "
-            f"Must be 'CLIENT_CREDENTIALS' or 'DEVICE_CODE'"
-        )
-
-    return _cached_token
+# =============================================================================
+# OAuth Token Functions
+# =============================================================================
+# NOTE: OAuth token acquisition functions have been migrated to oauth_mcp_server
+# This server now focuses on Omada-specific operations.
+# For token operations, use the oauth_mcp_server which provides:
+#   - OAuth 2.0 Client Credentials Flow
+#   - OAuth 2.0 Device Authorization Grant Flow
+#   - Token caching and management
+# =============================================================================
 
 @with_function_logging
 @mcp.tool()
@@ -484,11 +305,20 @@ async def query_omada_entity(entity_type: str = "Identity",
     """
     Generic query function for any Omada entity type (Identity, Resource, Role, etc).
 
+    IMPORTANT - Identity Field Names (use EXACTLY as shown):
+        - EMAIL (not "email", "MAIL", or "EMAILADDRESS")
+        - FIRSTNAME (not "firstname" or "first_name")
+        - LASTNAME (not "lastname" or "last_name")
+        - DISPLAYNAME (not "displayname" or "display_name")
+        - EMPLOYEEID (not "employee_id")
+        - DEPARTMENT (not "department")
+        - STATUS (not "status")
+
     Args:
         entity_type: Type of entity to query (Identity, Resource, Role, Account, etc)
         filters: Dictionary containing filter criteria:
                 {
-                    "field_filters": [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"}],
+                    "field_filters": [{"field": "EMAIL", "value": "user@domain.com", "operator": "eq"}],
                     "resource_type_id": 1011066,  # For Resource entities
                     "resource_type_name": "APPLICATION_ROLES",  # Alternative to resource_type_id
                     "system_id": 1011066,  # For Resource entities
@@ -509,7 +339,12 @@ async def query_omada_entity(entity_type: str = "Identity",
         impersonate_user: Optional email address for user impersonation (required for user-delegated tokens)
 
     Examples:
-        # Simple field filter
+        # Query by email (IMPORTANT: field name is "EMAIL" not "email" or "MAIL")
+        await query_omada_entity("Identity", filters={
+            "field_filters": [{"field": "EMAIL", "value": "user@domain.com", "operator": "eq"}]
+        })
+
+        # Query by first name
         await query_omada_entity("Identity", filters={
             "field_filters": [{"field": "FIRSTNAME", "value": "John", "operator": "eq"}]
         })
@@ -522,7 +357,7 @@ async def query_omada_entity(entity_type: str = "Identity",
 
         # Multiple filters combined
         await query_omada_entity("Identity", filters={
-            "field_filters": [{"field": "DEPT", "value": "IT", "operator": "eq"}],
+            "field_filters": [{"field": "DEPARTMENT", "value": "IT", "operator": "eq"}],
             "custom_filter": "STATUS eq 'ACTIVE'"
         })
 
@@ -644,32 +479,25 @@ async def query_omada_entity(entity_type: str = "Identity",
             query_string = urllib.parse.urlencode(query_params)
             endpoint_url = f"{endpoint_url}?{query_string}"
 
-        # Check if AUTH_METHOD requires bearer_token
-        auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
-
-        # Get the Azure token - use provided token or acquire new one
+        # Bearer token is always required (OAuth functions migrated to oauth_mcp_server)
         if bearer_token:
             logger.debug("Using provided bearer token for OData request")
             # Strip "Bearer " prefix if already present to avoid double-prefix
             clean_token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
             auth_header = f"Bearer {clean_token}"
         else:
-            # If AUTH_METHOD is DEVICE_CODE, bearer_token is mandatory
-            if auth_method == "DEVICE_CODE":
-                raise Exception(
-                    "bearer_token parameter is required when AUTH_METHOD=DEVICE_CODE.\n"
-                    "Device Code flow requires user delegated authentication.\n\n"
-                    "Workflow:\n"
-                    "1. Run 'start device authentication' to get user code\n"
-                    "2. Complete authentication at microsoft.com/devicelogin\n"
-                    "3. Run 'complete device authentication' to get bearer token\n"
-                    "4. Pass token to this function using bearer_token parameter\n\n"
-                    "Example: bearer_token='eyJ0eXAiOiJKV1QiLCJhbGc...'"
-                )
-
-            logger.debug("Acquiring new bearer token for OData request via OAuth")
-            token_data = await get_cached_token(scope)
-            auth_header = f"Bearer {token_data['access_token']}"
+            # OAuth token functions have been migrated to oauth_mcp_server
+            # bearer_token is now mandatory for all authentication methods
+            raise Exception(
+                "bearer_token parameter is required.\n"
+                "OAuth token functions have been migrated to oauth_mcp_server.\n\n"
+                "Workflow:\n"
+                "1. Use oauth_mcp_server to obtain a bearer token:\n"
+                "   - For Device Code flow: 'start device authentication' then 'complete device authentication'\n"
+                "   - For Client Credentials: use oauth_mcp_server's token acquisition functions\n"
+                "2. Pass the token to this function using bearer_token parameter\n\n"
+                "Example: bearer_token='eyJ0eXAiOiJKV1QiLCJhbGc...'"
+            )
 
         # Make API call to Omada
         headers = {
@@ -768,9 +596,16 @@ async def query_omada_identity(field_filters: list = None,
     """
     Query Omada Identity entities (wrapper for query_omada_entity).
 
+    IMPORTANT - Identity Field Names (use EXACTLY as shown):
+        - EMAIL (not "email", "MAIL", or "EMAILADDRESS")
+        - FIRSTNAME (not "firstname" or "first_name")
+        - LASTNAME (not "lastname" or "last_name")
+        - DISPLAYNAME, EMPLOYEEID, DEPARTMENT, STATUS
+
     Args:
         field_filters: List of field filters:
-                      [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
+                      [{"field": "EMAIL", "value": "user@domain.com", "operator": "eq"},
+                       {"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
                        {"field": "LASTNAME", "value": "Taylor", "operator": "startswith"}]
         omada_base_url: Omada instance URL
         scope: OAuth2 scope for the token
@@ -1033,31 +868,6 @@ async def get_all_omada_identities(omada_base_url: str = None,
         bearer_token=bearer_token
     )
 
-@with_function_logging
-@mcp.tool()
-async def count_omada_identities(filter_condition: str = None,
-                                omada_base_url: str = None,
-                                scope: str = None,
-                                bearer_token: str = None) -> str:
-    """
-    Count identities in Omada Identity system with optional filtering.
-
-    Args:
-        filter_condition: OData filter condition (optional)
-        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
-        bearer_token: Optional bearer token to use instead of acquiring a new one
-
-    Returns:
-        JSON response with count or error message
-    """
-    return await query_omada_identity(
-        omada_base_url=omada_base_url,
-        scope=scope,
-        filter_condition=filter_condition,
-        count_only=True,
-        bearer_token=bearer_token
-    )
 
 @with_function_logging
 @mcp.tool()
@@ -1067,85 +877,37 @@ def ping() -> str:
 
 @with_function_logging
 @mcp.tool()
-async def get_azure_token(scope: str = None) -> str:
+async def check_omada_config() -> str:
     """
-    Get an Azure OAuth2 Bearer token for the specified scope.
-    
-    Args:
-        scope: OAuth2 scope (default: Microsoft Graph API)
-        
-    Returns:
-        Bearer token string
-    """
-    try:
-        token_data = await get_cached_token(scope)
-        bearer_token = f"Bearer {token_data['access_token']}"
-        return bearer_token
-    except Exception as e:
-        return f"Error getting token: {str(e)}"
-
-@with_function_logging
-@mcp.tool()
-async def check_auth_config() -> str:
-    """
-    Check and display current authentication configuration.
-
-    Shows which authentication method is configured (CLIENT_CREDENTIALS or DEVICE_CODE)
-    and validates the configuration for that method.
+    Check and display current Omada server configuration.
 
     Returns:
-        JSON string with authentication configuration details
+        JSON string with Omada configuration details
     """
     try:
-        auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
-
         config = {
-            "auth_method": auth_method,
-            "tenant_id": os.getenv("TENANT_ID", "NOT_SET"),
-            "client_id": os.getenv("CLIENT_ID", "NOT_SET"),
-            "oauth2_scope": os.getenv("OAUTH2_SCOPE", "NOT_SET"),
+            "name": "Omada MCP Server",
+            "version": "1.0.0",
+            "omada_base_url": os.getenv("OMADA_BASE_URL", "NOT_SET"),
+            "graphql_endpoint_version": os.getenv("GRAPHQL_ENDPOINT_VERSION", "3.0"),
+            "log_level": os.getenv("LOG_LEVEL", "INFO"),
+            "log_file": os.getenv("LOG_FILE", "omada_mcp_server.log"),
         }
 
-        if auth_method == "CLIENT_CREDENTIALS":
-            config["client_secret_set"] = bool(os.getenv("CLIENT_SECRET"))
-            config["access_token_url"] = os.getenv("ACCESS_TOKEN_URL", "NOT_SET")
+        # Validate required settings
+        missing = []
+        if config["omada_base_url"] == "NOT_SET":
+            missing.append("OMADA_BASE_URL")
 
-            # Validate required settings
-            missing = []
-            if not os.getenv("CLIENT_SECRET"):
-                missing.append("CLIENT_SECRET")
-            if config["tenant_id"] == "NOT_SET":
-                missing.append("TENANT_ID")
-            if config["client_id"] == "NOT_SET":
-                missing.append("CLIENT_ID")
-
-            if missing:
-                config["status"] = "INVALID"
-                config["error"] = f"Missing required environment variables: {', '.join(missing)}"
-            else:
-                config["status"] = "VALID"
-
-        elif auth_method == "DEVICE_CODE":
-            config["status"] = "VALID"
-            config["note"] = "Device Code mode: Automatic token acquisition disabled. Must pass bearer_token parameter."
-            config["workflow"] = [
-                "1. Run 'start device authentication'",
-                "2. Complete authentication at microsoft.com/devicelogin",
-                "3. Run 'complete device authentication' to get token",
-                "4. Pass token as parameter to functions"
-            ]
-            config["usage_example"] = "get_pending_approvals(impersonate_user='user@domain.com', bearer_token='eyJ0...')"
-            config["token_source"] = "conversation_context (no file storage)"
-
-        else:
+        if missing:
             config["status"] = "INVALID"
-            config["error"] = f"Invalid AUTH_METHOD '{auth_method}'. Must be 'CLIENT_CREDENTIALS' or 'DEVICE_CODE'"
+            config["error"] = f"Missing required environment variables: {', '.join(missing)}"
+        else:
+            config["status"] = "VALID"
 
-        # Check if token is currently cached
-        config["token_cached"] = _cached_token is not None
-        if _cached_token and "expires_at" in _cached_token:
-            config["cached_token_expires_at"] = _cached_token["expires_at"].isoformat()
-            config["cached_token_valid"] = datetime.now() < _cached_token["expires_at"]
+        # Add note about OAuth migration
+        config["note"] = "OAuth token functions have been migrated to oauth_mcp_server. All Omada functions require bearer_token parameter."
+        config["usage_example"] = "get_pending_approvals(impersonate_user='user@domain.com', bearer_token='eyJ0...')"
 
         return json.dumps(config, indent=2)
 
@@ -1156,80 +918,41 @@ async def check_auth_config() -> str:
             "error_type": type(e).__name__
         }, indent=2)
 
-@with_function_logging
-@mcp.tool()
-async def get_azure_token_info(scope: str = None) -> str:
-    """
-    Get detailed Azure OAuth2 token information including expiry.
-
-    Args:
-        scope: OAuth2 scope (default: Microsoft Graph API)
-
-    Returns:
-        JSON string with token details
-    """
-    try:
-        token_data = await get_cached_token(scope)
-
-        # Get authentication method
-        auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
-
-        # Prepare response data (excluding sensitive information)
-        info = {
-            "auth_method": auth_method,
-            "token_type": token_data.get("token_type", "Bearer"),
-            "expires_in": token_data.get("expires_in"),
-            "expires_at": token_data.get("expires_at").isoformat() if "expires_at" in token_data else None,
-            "scope": token_data.get("scope"),
-            "access_token_preview": f"{token_data['access_token'][:20]}..." if "access_token" in token_data else None,
-            "cached": _cached_token is not None
-        }
-        
-        return json.dumps(info, indent=2)
-    except Exception as e:
-        return f"Error getting token info: {str(e)}"
-
 async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = None, scope: str = None, graphql_version: str = None, bearer_token: str = None):
     """
     Prepare common GraphQL request components (URL, headers, token).
 
+    NOTE: OAuth token acquisition has been migrated to oauth_mcp_server.
+    This function now requires bearer_token to be passed as a parameter.
+
     Args:
         impersonate_user: User to impersonate in the request
         omada_base_url: Base URL for Omada instance
-        scope: OAuth2 scope for token acquisition
+        scope: OAuth2 scope (deprecated - kept for backward compatibility)
         graphql_version: GraphQL API version to use
-        bearer_token: Optional bearer token to use instead of acquiring a new one
+        bearer_token: Bearer token (REQUIRED) - obtain from oauth_mcp_server
 
     Returns:
         tuple: (graphql_url, headers, token)
+
+    Raises:
+        Exception if bearer_token is not provided
     """
-    # Check if AUTH_METHOD requires bearer_token
-    auth_method = os.getenv("AUTH_METHOD", "CLIENT_CREDENTIALS").upper()
+    # Bearer token is now mandatory
+    if not bearer_token:
+        raise Exception(
+            "bearer_token parameter is REQUIRED.\n"
+            "OAuth token functions have been migrated to oauth_mcp_server.\n\n"
+            "To obtain a token:\n"
+            "1. Use oauth_mcp_server's get_azure_token() for Client Credentials flow\n"
+            "2. OR use start_device_auth() + complete_device_auth() for Device Code flow\n"
+            "3. Pass the token to this function using bearer_token parameter\n\n"
+            "Example: bearer_token='eyJ0eXAiOiJKV1QiLCJhbGc...'"
+        )
 
-    # Use provided bearer token or acquire new one
-    if bearer_token:
-        logger.debug("Using provided bearer token")
-        # Strip "Bearer " prefix if already present to avoid double-prefix
-        token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
-    else:
-        # If AUTH_METHOD is DEVICE_CODE, bearer_token is mandatory
-        if auth_method == "DEVICE_CODE":
-            raise Exception(
-                "bearer_token parameter is required when AUTH_METHOD=DEVICE_CODE.\n"
-                "Device Code flow requires user delegated authentication.\n\n"
-                "Workflow:\n"
-                "1. Run 'start device authentication' to get user code\n"
-                "2. Complete authentication at microsoft.com/devicelogin\n"
-                "3. Run 'complete device authentication' to get bearer token\n"
-                "4. Pass token to this function using bearer_token parameter\n\n"
-                "Example: bearer_token='eyJ0eXAiOiJKV1QiLCJhbGc...'"
-            )
-
-        logger.debug("Acquiring new bearer token via OAuth")
-        token_info = await get_cached_token(scope)
-        token = token_info.get('access_token')
-        if not token:
-            raise Exception("Failed to obtain access token")
+    logger.debug("Using provided bearer token")
+    # Strip "Bearer " prefix if already present to avoid double-prefix
+    token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
 
     # Get base URL from parameter or environment
     if not omada_base_url:
@@ -1724,42 +1447,6 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
             "impersonated_user": impersonate_user,
             "error_type": type(e).__name__
         }, indent=2)
-
-@with_function_logging
-@mcp.tool()
-async def test_azure_token(api_endpoint: str = "https://graph.microsoft.com/v1.0/me",
-                          scope: str = "https://graph.microsoft.com/.default") -> str:
-    """
-    Test the Azure token by making an authenticated API call.
-    
-    Args:
-        api_endpoint: API endpoint to test (default: Microsoft Graph /me)
-        scope: OAuth2 scope for the token
-        
-    Returns:
-        API response or error message
-    """
-    try:
-        # Get the token
-        token_data = await get_cached_token(scope)
-        bearer_token = f"Bearer {token_data['access_token']}"
-        
-        # Make test API call
-        headers = {
-            "Authorization": bearer_token,
-            "Content-Type": "application/json"
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(api_endpoint, headers=headers, timeout=30.0)
-            
-            if response.status_code == 200:
-                return f"✅ Token test successful!\nStatus: {response.status_code}\nResponse: {response.text[:500]}..."
-            else:
-                return f"❌ Token test failed!\nStatus: {response.status_code}\nResponse: {response.text}"
-                
-    except Exception as e:
-        return f"Error testing token: {str(e)}"
 
 @with_function_logging
 @mcp.tool()
@@ -2605,203 +2292,5 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
             "error_type": type(e).__name__
         }, indent=2)
 
-
-async def test_token_locally():
-    """Test function to run locally and see token output"""
-    global _cached_token
-    logger.info("Testing Azure OAuth2 token retrieval...")
-    
-    # Clear cached token to force fresh request
-    _cached_token = None
-    logger.info("Cleared cached token")
-    
-    try:
-        token = await get_azure_token()
-        logger.info(f"Token received: {token}")
-        
-        logger.info("Token info:")
-        token_info = await get_azure_token_info()
-        logger.info(f"Token details: {token_info}")
-        
-        logger.info("Testing Omada API call:")
-        result = await query_omada_identity([
-            {"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
-            {"field": "LASTNAME", "value": "Taylor", "operator": "eq"}
-        ])
-        logger.info(f"API result: {result}")
-        
-    except Exception as e:
-        logger.error(f"Error: {e}")
-
 if __name__ == "__main__":
-    import sys
-
-    # Check if we want to test locally
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        asyncio.run(test_token_locally())
-    elif len(sys.argv) > 1 and sys.argv[1] == "test-access-request":
-        # Test access requests function
-        async def test_access_requests():
-            # Default impersonate user - you may need to change this
-            impersonate_user = "test@domain.com"
-
-            if len(sys.argv) > 2:
-                impersonate_user = sys.argv[2]
-
-            logger.info(f"🔍 Testing get_access_requests with impersonate_user: {impersonate_user}")
-
-            try:
-                # Get OAuth access token first
-                token_info = await get_cached_token()
-                token = token_info.get('access_token')
-
-                # Get Omada base URL from environment
-                omada_base_url = os.getenv("OMADA_BASE_URL")
-                # Get GraphQL endpoint version from environment (default to 2.6)
-                graphql_version = os.getenv("GRAPHQL_ENDPOINT_VERSION", "2.6")
-                graphql_url = f"{omada_base_url}/api/Domain/{graphql_version}"
-
-                # Test 1: Without filter
-                logger.debug("\n" + "="*80)
-                logger.info("🚀 TEST 1: ACCESS REQUESTS WITHOUT FILTER")
-                logger.debug("="*80)
-
-                graphql_query_no_filter = {
-                    "query": """query GetAccessRequests {
-  accessRequests {
-    total
-    data {
-      id
-      beneficiary {
-        id
-        identityId
-        displayName
-        contexts {
-          id
-        }
-      }
-      resource {
-        name
-      }
-      status {
-        approvalStatus
-      }
-    }
-  }
-}"""
-                }
-
-                headers = {
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                    "impersonate_user": impersonate_user
-                }
-
-                logger.debug(f"📡 URL: {graphql_url}")
-                logger.debug(f"📋 Method: POST")
-
-                logger.debug(f"\n📤 Request Headers:")
-                for key, value in headers.items():
-                    if key == "Authorization":
-                        logger.debug(f"  ├── {key}: Bearer {value.split(' ')[1][:20]}...")
-                    else:
-                        logger.debug(f"  ├── {key}: {value}")
-
-                logger.debug(f"\n📝 Request Body:")
-                logger.debug(json.dumps(graphql_query_no_filter, indent=2))
-
-                # Execute request
-                logger.debug(f"\n⏳ Executing POST request...")
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        graphql_url,
-                        json=graphql_query_no_filter,
-                        headers=headers,
-                        timeout=30.0
-                    )
-
-                    logger.debug(f"\n📥 Response Status: {response.status_code}")
-                    logger.debug(f"📥 Response Headers:")
-                    for key, value in response.headers.items():
-                        logger.debug(f"  ├── {key}: {value}")
-
-                    logger.debug(f"\n📄 Response Body:")
-                    if response.status_code == 200:
-                        result = response.json()
-                        logger.debug(json.dumps(result, indent=2))
-                    else:
-                        logger.debug(response.text)
-
-                # Test 2: With filter
-                logger.debug("\n" + "="*80)
-                logger.info("🚀 TEST 2: ACCESS REQUESTS WITH FILTER (status=PENDING)")
-                logger.debug("="*80)
-
-                graphql_query_filtered = {
-                    "query": f"""query GetAccessRequests {{
-  accessRequests(filters: {{status: {json.dumps("PENDING")}}}) {{
-    total
-    data {{
-      id
-      beneficiary {{
-        id
-        identityId
-        displayName
-        contexts {{
-          id
-        }}
-      }}
-      resource {{
-        name
-      }}
-      status {{
-        approvalStatus
-      }}
-    }}
-  }}
-}}"""
-                }
-
-                logger.debug(f"📡 URL: {graphql_url}")
-                logger.debug(f"📋 Method: POST")
-
-                logger.debug(f"\n📤 Request Headers:")
-                for key, value in headers.items():
-                    if key == "Authorization":
-                        logger.debug(f"  ├── {key}: Bearer {value.split(' ')[1][:20]}...")
-                    else:
-                        logger.debug(f"  ├── {key}: {value}")
-
-                logger.debug(f"\n📝 Request Body:")
-                logger.debug(json.dumps(graphql_query_filtered, indent=2))
-
-                # Execute filtered request
-                logger.debug(f"\n⏳ Executing POST request...")
-                async with httpx.AsyncClient() as client:
-                    response_filtered = await client.post(
-                        graphql_url,
-                        json=graphql_query_filtered,
-                        headers=headers,
-                        timeout=30.0
-                    )
-
-                    logger.debug(f"\n📥 Response Status: {response_filtered.status_code}")
-                    logger.debug(f"📥 Response Headers:")
-                    for key, value in response_filtered.headers.items():
-                        logger.debug(f"  ├── {key}: {value}")
-
-                    logger.debug(f"\n📄 Response Body:")
-                    if response_filtered.status_code == 200:
-                        result_filtered = response_filtered.json()
-                        logger.debug(json.dumps(result_filtered, indent=2))
-                    else:
-                        logger.debug(response_filtered.text)
-
-                logger.info(f"\n✅ Testing completed!")
-
-            except Exception as e:
-                logger.error(f"❌ Error testing access requests: {e}")
-
-        asyncio.run(test_access_requests())
-    else:
-        mcp.run()
+    mcp.run()

@@ -109,7 +109,6 @@ LOG_LEVEL_query_calculated_assignments=INFO
 
 # Identity Management Functions
 LOG_LEVEL_get_all_omada_identities=INFO
-LOG_LEVEL_count_omada_identities=INFO
 
 # Authentication Functions
 LOG_LEVEL_get_azure_token=INFO
@@ -170,9 +169,8 @@ python server.py
 
 - **`query_omada_identity`** - Query identities with field filters and OData parameters
 - **`get_all_omada_identities`** - Retrieve all identities with pagination support
-- **`count_omada_identities`** - Count identities with optional filtering
 - **`query_omada_entities`** - Generic query for any entity type (Identity, Resource, Role, etc.)
-- **`query_omada_entity`** - Advanced generic query with full OData support
+- **`query_omada_entity`** - Advanced generic query with full OData support (use with `count_only=True` to count entities)
 
 ### Resource Query Functions
 
