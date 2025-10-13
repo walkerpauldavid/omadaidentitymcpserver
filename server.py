@@ -125,6 +125,10 @@ class ODataQueryError(OmadaServerError):
 
 mcp = FastMCP("OmadaIdentityMCP")
 
+# Register MCP Prompts for workflow guidance
+from prompts import register_prompts
+register_prompts(mcp)
+
 def _build_odata_filter(field_name: str, value: str, operator: str) -> str:
     """
     Build an OData filter expression based on the operator.
@@ -1522,6 +1526,10 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         id
         description
         system {{
+          name
+          id
+        }}
+        resourceType {{
           name
           id
         }}
