@@ -1456,6 +1456,7 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
 @mcp.tool()
 async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                                        system_id: str = None, context_id: str = None,
+                                       resource_name: str = None,
                                        omada_base_url: str = None, scope: str = None,
                                        bearer_token: str = None) -> str:
     """
@@ -1483,6 +1484,8 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
     Optional parameters:
         system_id: System ID to filter resources by (e.g., "1c2768e9-86fd-43fd-9e0d-5c8fee21b59b")
         context_id: Context ID to filter resources by (e.g., "6dd03400-ddb5-4cc4-bfff-490d94b195a9")
+        resource_name: Resource name to filter by (string, partial match supported)
+                      Example: "Sales" will match "Sales Team Access", "Sales Reports", etc.
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
@@ -1514,6 +1517,13 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
 
         if context_id and context_id.strip():
             filters += f', contextId: "{context_id}"'
+
+        # Add resource_name filter if provided (validates and adds to GraphQL filter)
+        if resource_name and resource_name.strip():
+            # Escape any quotes in the resource name to prevent GraphQL injection
+            escaped_resource_name = resource_name.strip().replace('"', '\\"')
+            filters += f', name: {{filterValue: "{escaped_resource_name}", operator: CONTAINS}}'
+            logger.debug(f"Added resource_name filter: {escaped_resource_name}")
 
         # Build GraphQL query with the filters
         query = f"""query GetResourcesForBeneficiary {{
@@ -1600,6 +1610,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
 @mcp.tool()
 async def get_requestable_resources(identity_id: str, impersonate_user: str,
                                    system_id: str = None, context_id: str = None,
+                                   resource_name: str = None,
                                    omada_base_url: str = None, scope: str = None,
                                    bearer_token: str = None) -> str:
     """
@@ -1619,6 +1630,8 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str,
     OPTIONAL:
         system_id: Filter by specific system
         context_id: Filter by specific context
+        resource_name: Resource name to filter by (string, partial match supported)
+                      Example: "Sales" will match "Sales Team Access", "Sales Reports", etc.
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
@@ -1630,6 +1643,7 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str,
         impersonate_user=impersonate_user,
         system_id=system_id,
         context_id=context_id,
+        resource_name=resource_name,
         omada_base_url=omada_base_url,
         scope=scope,
         bearer_token=bearer_token
