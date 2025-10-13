@@ -60,25 +60,35 @@ def get_function_log_level(function_name: str) -> int:
     # Convert string to logging level, default to INFO if invalid
     return getattr(logging, func_log_level, logging.INFO)
 
-def set_function_logger_level(function_name: str) -> int:
+def set_function_logger_level(function_name: str) -> tuple:
     """
-    Set the logger level for a specific function and return the old level.
+    Set the logger level for a specific function and return the old levels.
 
     Args:
         function_name: Name of the function
 
     Returns:
-        Previous logger level for restoration
+        Tuple of (old_logger_level, old_handler_levels) for restoration
     """
     old_level = logger.level
     new_level = get_function_log_level(function_name)
+
+    # Save old handler levels before changing them
+    old_handler_levels = [(handler, handler.level) for handler in logger.handlers]
+
+    # Set logger level
     logger.setLevel(new_level)
+
+    # IMPORTANT: Also set handler levels so they don't filter out DEBUG messages
+    # Handlers have their own level filter separate from the logger level
+    for handler in logger.handlers:
+        handler.setLevel(new_level)
 
     # Log the level change if it's different (only at DEBUG level to avoid noise)
     if old_level != new_level and new_level <= logging.DEBUG:
         logger.debug(f"Function '{function_name}' using log level: {logging.getLevelName(new_level)}")
 
-    return old_level
+    return (old_level, old_handler_levels)
 
 def with_function_logging(func):
     """
@@ -92,19 +102,33 @@ def with_function_logging(func):
     """
     if asyncio.iscoroutinefunction(func):
         async def async_wrapper(*args, **kwargs):
-            old_level = set_function_logger_level(func.__name__)
+            old_level, old_handler_levels = set_function_logger_level(func.__name__)
             try:
                 return await func(*args, **kwargs)
             finally:
+                # Restore logger level
                 logger.setLevel(old_level)
+                # Restore handler levels
+                for handler, level in old_handler_levels:
+                    handler.setLevel(level)
+        # Preserve the original function name and metadata
+        async_wrapper.__name__ = func.__name__
+        async_wrapper.__doc__ = func.__doc__
         return async_wrapper
     else:
         def sync_wrapper(*args, **kwargs):
-            old_level = set_function_logger_level(func.__name__)
+            old_level, old_handler_levels = set_function_logger_level(func.__name__)
             try:
                 return func(*args, **kwargs)
             finally:
+                # Restore logger level
                 logger.setLevel(old_level)
+                # Restore handler levels
+                for handler, level in old_handler_levels:
+                    handler.setLevel(level)
+        # Preserve the original function name and metadata
+        sync_wrapper.__name__ = func.__name__
+        sync_wrapper.__doc__ = func.__doc__
         return sync_wrapper
 
 # Custom Exception Classes
@@ -1012,7 +1036,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
         if variables:
             payload["variables"] = variables
 
-        logger.info(f"GraphQL Request to {graphql_url} with impersonation of {impersonate_user}")
+        logger.debug(f"GraphQL Request to {graphql_url} with impersonation of {impersonate_user}")
         # Execute request
         async with httpx.AsyncClient() as client:
             response = await client.post(graphql_url, json=payload, headers=headers, timeout=30.0)
@@ -1067,6 +1091,8 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
         JSON string containing access requests data
     """
     try:
+        logger.debug(f"Getting access requests for user: {impersonate_user}, filter: {filter_field}={filter_value if filter_field else 'none'}")
+
         # Build GraphQL query
         if filter_field and filter_value:
             # With filter
@@ -1253,7 +1279,8 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
             omada_base_url=omada_base_url,
             scope=scope,
             select_fields="UId",
-            top=1
+            top=1,
+            bearer_token=bearer_token
         )
 
         # Parse the identity lookup result
@@ -1472,12 +1499,28 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
     This is the CORRECT function for access request workflows.
     DO NOT use query_omada_resources for access requests - it does not scope to user permissions.
 
+    CRITICAL - Identity ID Field Name:
+        WRONG: Do NOT use the "Id" field (e.g., 1006715) - this is the integer database ID
+        CORRECT: Use the "UId" field (e.g., "e3e869c4-369a-476e-a969-d57059d0b1e4") - this is the 32-character UUID
+
+        When querying for identity data, you MUST:
+        1. Query the Identity entity to get the user record
+        2. Extract the "UId" field (NOT "Id") from the result
+        3. Use that UId value as the identity_id parameter
+
+        Example workflow:
+        - Query: query_omada_identity with EMAIL filter returns {"UId": "e3e869c4-...", "Id": 1006715}
+        - Use UId: "e3e869c4-..." as identity_id parameter (32 character UUID)
+        - DO NOT use Id: 1006715 (this will fail!)
+
     IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
     you MUST prompt the user to provide them before calling this function.
 
     REQUIRED PARAMETERS (prompt user if missing):
-        identity_id: The identity ID of the person requesting access (e.g., "e3e869c4-369a-476e-a969-d57059d0b1e4")
-                    PROMPT: "Please provide the identity ID"
+        identity_id: The identity UId (32-character UUID, NOT the integer Id field!)
+                    Example: "e3e869c4-369a-476e-a969-d57059d0b1e4" (CORRECT)
+                    NOT: 1006715 (WRONG - this is the Id field, not UId)
+                    PROMPT: "Please provide the identity UId (32-character UUID from the UId field, not the Id field)"
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
 
@@ -1502,6 +1545,17 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                 "error_type": "ValidationError"
             }, indent=2)
 
+        # Validate that identity_id is a UUID (32 characters), not an integer Id
+        if identity_id.strip().isdigit():
+            return json.dumps({
+                "status": "error",
+                "message": f"Invalid identity_id: '{identity_id}' appears to be an integer Id field, but this function requires the UId field (32-character UUID). "
+                           f"When you query an Identity, you get both 'Id' (integer like 1006715) and 'UId' (UUID like 'e3e869c4-369a-476e-a969-d57059d0b1e4'). "
+                           f"You MUST use the UId field, not the Id field.",
+                "error_type": "ValidationError",
+                "hint": "Query the identity first, then extract the 'UId' field (not 'Id') from the response"
+            }, indent=2)
+
         if not impersonate_user or not impersonate_user.strip():
             return json.dumps({
                 "status": "error",
@@ -1522,7 +1576,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         if resource_name and resource_name.strip():
             # Escape any quotes in the resource name to prevent GraphQL injection
             escaped_resource_name = resource_name.strip().replace('"', '\\"')
-            filters += f', name: {{filterValue: "{escaped_resource_name}", operator: CONTAINS}}'
+            filters += f', name: "{escaped_resource_name}"'
             logger.debug(f"Added resource_name filter: {escaped_resource_name}")
 
         # Build GraphQL query with the filters
@@ -1623,8 +1677,20 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str,
     - Find what resources are available for access request
     - See requestable resources for a user
 
+    CRITICAL - Identity ID Field Name:
+        WRONG: Do NOT use the "Id" field (e.g., 1006715) - this is the integer database ID
+        CORRECT: Use the "UId" field (e.g., "2c68e1df-1335-4e8c-8ef9-eff1d2005629") - this is the 32-character UUID
+
+        When you query an Identity record, it returns BOTH fields:
+        - "Id": 1006715          <- WRONG - Do not use this!
+        - "UId": "2c68e1df-..."  <- CORRECT - Use this as identity_id!
+
+        YOU MUST extract the "UId" field (32-character UUID), NOT the "Id" field (integer).
+
     REQUIRED:
-        identity_id: The user's identity ID who wants to request access
+        identity_id: The user's identity UId (32-character UUID from the "UId" field, NOT the "Id" field!)
+                    CORRECT example: "2c68e1df-1335-4e8c-8ef9-eff1d2005629" (UId field)
+                    WRONG example: 1006715 (Id field - this will fail!)
         impersonate_user: Email address to impersonate (e.g., "ROBWOL@54MV4C.ONMICROSOFT.COM")
 
     OPTIONAL:
@@ -1652,6 +1718,138 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str,
 
 @with_function_logging
 @mcp.tool()
+async def get_identities_for_beneficiary(impersonate_user: str,
+                                         page: int = None, rows: int = None,
+                                         omada_base_url: str = None, scope: str = None,
+                                         bearer_token: str = None) -> str:
+    """
+    Get a list of identities available for access requests using Omada GraphQL API.
+
+    USE THIS FUNCTION when user asks to:
+    - "list identities for access request"
+    - "show identities I can request for"
+    - "get beneficiary identities"
+    - "list identities available for access requests"
+
+    This function queries the accessRequestComponents.identities endpoint to get identities
+    that can be used as beneficiaries in access requests.
+
+    IMPORTANT: This function requires 1 mandatory parameter.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+
+    Optional parameters:
+        page: Page number for pagination (e.g., 1, 2, 3...)
+        rows: Number of rows per page (e.g., 10, 20, 50...)
+        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
+        scope: OAuth2 scope for the token
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
+    Returns:
+        JSON response with identities data including pagination metadata or error message
+    """
+    try:
+        # Validate mandatory fields
+        if not impersonate_user or not impersonate_user.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: impersonate_user",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Build pagination clause if provided
+        pagination_clause = ""
+        if page is not None and rows is not None:
+            pagination_clause = f"pagination: {{page: {page}, rows: {rows}}}, "
+
+        # Build GraphQL query with pagination
+        query = f"""query GetIdentitiesForBeneficiary {{
+  accessRequestComponents {{
+    identities(
+      {pagination_clause}filters: {{}}
+    ) {{
+      pages
+      total
+      data {{
+        firstName
+        displayName
+        identityId
+        id
+        lastName
+        contexts {{
+          id
+          displayName
+        }}
+      }}
+    }}
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request
+        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope, bearer_token=bearer_token)
+
+        if result["success"]:
+            data = result["data"]
+            # Extract identities from the GraphQL response
+            if ('data' in data and 'accessRequestComponents' in data['data']):
+                access_request_components = data['data']['accessRequestComponents']
+                identities_obj = access_request_components.get('identities', {})
+                identities = identities_obj.get('data', [])
+                total = identities_obj.get('total', len(identities))
+                pages = identities_obj.get('pages', 1)
+
+                return json.dumps({
+                    "status": "success",
+                    "impersonated_user": impersonate_user,
+                    "pagination": {
+                        "current_page": page,
+                        "rows_per_page": rows,
+                        "total_identities": total,
+                        "total_pages": pages
+                    },
+                    "identities_count": len(identities),
+                    "identities": identities,
+                    "endpoint": result["endpoint"]
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "no_identities",
+                    "impersonated_user": impersonate_user,
+                    "message": "No identities found in response",
+                    "response": data
+                }, indent=2)
+        else:
+            # Handle GraphQL request failure
+            error_result = {
+                "status": "error",
+                "impersonated_user": impersonate_user,
+                "error_type": result.get("error_type", "GraphQLError")
+            }
+
+            if "status_code" in result:
+                error_result["status_code"] = result["status_code"]
+            if "error" in result:
+                error_result["error"] = result["error"]
+            if "endpoint" in result:
+                error_result["endpoint"] = result["endpoint"]
+
+            return json.dumps(error_result, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "exception",
+            "impersonated_user": impersonate_user,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }, indent=2)
+
+
+@with_function_logging
+@mcp.tool()
 async def get_calculated_assignments_detailed(identity_id: str, impersonate_user: str,
                                              resource_type_name: str = None,
                                              compliance_status: str = None,
@@ -1664,9 +1862,28 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
     IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
     you MUST prompt the user to provide them before calling this function.
 
+    CRITICAL - Identity ID Field Name:
+        WRONG: Do NOT use the "IdentityID" field (e.g., "ROBWOL") - this is a user-readable identifier
+        WRONG: Do NOT use the "Id" field (e.g., 1006715) - this is the integer database ID
+        CORRECT: Use the "UId" field (e.g., "2c68e1df-1335-4e8c-8ef9-eff1d2005629") - this is the 32-character GUID
+
+        When querying Identity data, you MUST:
+        1. Query the Identity entity to get the user record
+        2. Extract the "UId" field (NOT "Id" or "IdentityID") from the result
+        3. Use that UId value as the identity_id parameter
+
+        Example workflow:
+        - Query: query_omada_identity with EMAIL filter returns {"UId": "2c68e1df-...", "Id": 1006715, "IdentityID": "ROBWOL"}
+        - Use UId: "2c68e1df-..." as identity_id parameter (32 character GUID)
+        - DO NOT use Id: 1006715 (this will fail!)
+        - DO NOT use IdentityID: "ROBWOL" (this will fail!)
+
     REQUIRED PARAMETERS (prompt user if missing):
-        identity_id: The identity ID to get assignments for (e.g., "5da7f8fc-0119-46b0-a6b4-06e5c78edf68")
-                    PROMPT: "Please provide the identity ID"
+        identity_id: The identity UId (32-character GUID from the "UId" field, NOT the "Id" or "IdentityID" fields!)
+                    Example: "2c68e1df-1335-4e8c-8ef9-eff1d2005629" (CORRECT - from UId field)
+                    NOT: 1006715 (WRONG - this is the Id field)
+                    NOT: "ROBWOL" (WRONG - this is the IdentityID field)
+                    PROMPT: "Please provide the identity UId (32-character GUID from the UId field)"
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
 
@@ -1777,7 +1994,7 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
   }}
 }}"""
 
-        print(f"GraphQL query: {query}")
+        #print(f"GraphQL query: {query}")
         logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request with version 2.19
@@ -1873,6 +2090,8 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
         JSON response with contexts data or error message
     """
     try:
+        logger.debug(f"get_identity_contexts called with identity_id={identity_id}, impersonate_user={impersonate_user}")
+
         # Validate mandatory fields
         if not identity_id or not identity_id.strip():
             return json.dumps({
@@ -1887,6 +2106,9 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
                 "message": "Missing required field: impersonate_user",
                 "error_type": "ValidationError"
             }, indent=2)
+
+        logger.debug(f"Validation passed, building GraphQL query for identity_id: {identity_id}")
+
         # Build GraphQL query with the provided identity_id
         query = f"""query GetContextsForIdentity {{
   accessRequestComponents {{
