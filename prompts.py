@@ -267,4 +267,4 @@ Check the logs:
 - Set LOG_LEVEL_<function_name>=DEBUG in .env for detailed logs
 """
 
-    print("✅ Registered 6 MCP prompts: request_access_workflow, approve_requests_workflow, search_identity_workflow, review_assignments_workflow, authentication_workflow, troubleshooting_workflow")
+    print("Registered 6 MCP prompts: request_access_workflow, approve_requests_workflow, search_identity_workflow, review_assignments_workflow, authentication_workflow, troubleshooting_workflow")
