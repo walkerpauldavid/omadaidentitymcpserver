@@ -3,7 +3,7 @@
 ## Phase 1 Complete: Helper Functions Created
 
 ### Created Files:
-- **helpers.py** - Contains 3 helper functions to reduce code duplication
+- **helpers.py** - Contains 4 helper functions to reduce code duplication
 
 ### Helper Functions:
 
@@ -21,7 +21,12 @@
    - Automatically includes context fields
    - Reduces 9-11 lines to 7-9 lines
 
-## Refactored Functions (3 Examples)
+4. **build_pagination_clause(page=None, rows=None)** - Builds GraphQL pagination clause (Recommendation #6)
+   - Returns formatted pagination string or empty string
+   - Reduces 3-4 lines to 1 line
+   - Reusable across all paginated queries
+
+## Refactored Functions (4 Examples)
 
 ### ✅ 1. get_identity_contexts (lines 2119-2208)
 **Before:** 111 lines with manual validation and response building
@@ -38,9 +43,14 @@
 **After:** ~88 lines using helpers
 **Savings:** ~17 lines
 
-**Total Savings So Far:** ~59 lines reduced from 3 functions
+### ✅ 4. get_identities_for_beneficiary (lines 1758-1872)
+**Before:** ~115 lines with manual validation, response building, and pagination logic
+**After:** ~93 lines using helpers including build_pagination_clause
+**Savings:** ~22 lines
 
-## Remaining Functions to Refactor (~24 functions)
+**Total Savings So Far:** ~81 lines reduced from 4 functions
+
+## Remaining Functions to Refactor (~23 functions)
 
 These functions follow the same patterns and can be refactored using the helper functions:
 
@@ -48,11 +58,10 @@ These functions follow the same patterns and can be refactored using the helper 
 1. get_access_requests
 2. create_access_request
 3. get_resources_for_beneficiary
-4. get_identities_for_beneficiary
-5. get_approval_details
-6. make_approval_decision
-7. get_calculated_assignments_detailed
-8. query_calculated_assignments
+4. get_approval_details
+5. make_approval_decision
+6. get_calculated_assignments_detailed
+7. query_calculated_assignments
 
 ### OData Query Functions:
 9. query_omada_entity
@@ -171,6 +180,31 @@ except Exception as e:
         message=str(e),
         impersonated_user=impersonate_user
     )
+```
+
+### Step 5: Replace pagination clause (for paginated queries)
+**Before:**
+```python
+pagination_clause = ""
+if page is not None and rows is not None:
+    pagination_clause = f"pagination: {{page: {page}, rows: {rows}}}, "
+
+query = f"""query {{
+  identities(
+    {pagination_clause}filters: {{}}
+  ) {{ data {{ id }} }}
+}}"""
+```
+
+**After:**
+```python
+pagination_clause = build_pagination_clause(page=page, rows=rows)
+
+query = f"""query {{
+  identities(
+    {pagination_clause}filters: {{}}
+  ) {{ data {{ id }} }}
+}}"""
 ```
 
 ## Estimated Total Impact

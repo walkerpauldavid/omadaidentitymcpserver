@@ -138,3 +138,37 @@ def build_success_response(
         response["endpoint"] = endpoint
 
     return json.dumps(response, indent=2)
+
+
+def build_pagination_clause(page: int = None, rows: int = None) -> str:
+    """
+    Build GraphQL pagination clause for queries.
+
+    Args:
+        page: Page number for pagination (e.g., 1, 2, 3...)
+        rows: Number of rows per page (e.g., 10, 20, 50...)
+
+    Returns:
+        Formatted pagination clause string for GraphQL query, or empty string if parameters not provided
+
+    Example:
+        # With pagination
+        pagination = build_pagination_clause(page=2, rows=20)
+        # Returns: "pagination: {page: 2, rows: 20}, "
+
+        # Without pagination
+        pagination = build_pagination_clause()
+        # Returns: ""
+
+        # Usage in query
+        query = f'''query {{
+          identities(
+            {build_pagination_clause(page=1, rows=10)}filters: {{}}
+          ) {{
+            data {{ id }}
+          }}
+        }}'''
+    """
+    if page is not None and rows is not None:
+        return f"pagination: {{page: {page}, rows: {rows}}}, "
+    return ""

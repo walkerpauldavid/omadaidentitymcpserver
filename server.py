@@ -11,7 +11,7 @@ import urllib.parse
 import logging
 
 # Import helper functions for code simplification
-from helpers import validate_required_fields, build_error_response, build_success_response
+from helpers import validate_required_fields, build_error_response, build_success_response, build_pagination_clause
 
 # Load environment variables
 load_dotenv()
@@ -1790,18 +1790,13 @@ async def get_identities_for_beneficiary(impersonate_user: str,
         JSON response with identities data including pagination metadata or error message
     """
     try:
-        # Validate mandatory fields
-        if not impersonate_user or not impersonate_user.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: impersonate_user",
-                "error_type": "ValidationError"
-            }, indent=2)
+        # Validate mandatory fields using helper
+        error = validate_required_fields(impersonate_user=impersonate_user)
+        if error:
+            return error
 
-        # Build pagination clause if provided
-        pagination_clause = ""
-        if page is not None and rows is not None:
-            pagination_clause = f"pagination: {{page: {page}, rows: {rows}}}, "
+        # Build pagination clause using helper
+        pagination_clause = build_pagination_clause(page=page, rows=rows)
 
         # Build GraphQL query with pagination
         query = f"""query GetIdentitiesForBeneficiary {{
@@ -1841,19 +1836,19 @@ async def get_identities_for_beneficiary(impersonate_user: str,
                 total = identities_obj.get('total', len(identities))
                 pages = identities_obj.get('pages', 1)
 
-                return json.dumps({
-                    "status": "success",
-                    "impersonated_user": impersonate_user,
-                    "pagination": {
+                return build_success_response(
+                    data=identities,
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    pagination={
                         "current_page": page,
                         "rows_per_page": rows,
                         "total_identities": total,
                         "total_pages": pages
                     },
-                    "identities_count": len(identities),
-                    "identities": identities,
-                    "endpoint": result["endpoint"]
-                }, indent=2)
+                    identities_count=len(identities),
+                    identities=identities
+                )
             else:
                 return json.dumps({
                     "status": "no_identities",
@@ -1862,29 +1857,19 @@ async def get_identities_for_beneficiary(impersonate_user: str,
                     "response": data
                 }, indent=2)
         else:
-            # Handle GraphQL request failure
-            error_result = {
-                "status": "error",
-                "impersonated_user": impersonate_user,
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "status_code" in result:
-                error_result["status_code"] = result["status_code"]
-            if "error" in result:
-                error_result["error"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            return json.dumps(error_result, indent=2)
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "exception",
-            "impersonated_user": impersonate_user,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user
+        )
 
 
 @with_function_logging
