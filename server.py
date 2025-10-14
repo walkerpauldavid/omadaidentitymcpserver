@@ -111,9 +111,14 @@ def with_function_logging(func):
                 # Restore handler levels
                 for handler, level in old_handler_levels:
                     handler.setLevel(level)
-        # Preserve the original function name and metadata
+        # Manually preserve metadata without setting __wrapped__ (which causes FastMCP to bypass decorator)
         async_wrapper.__name__ = func.__name__
         async_wrapper.__doc__ = func.__doc__
+        async_wrapper.__module__ = func.__module__
+        async_wrapper.__qualname__ = func.__qualname__
+        async_wrapper.__annotations__ = func.__annotations__
+        # Also update __dict__ as functools.wraps does
+        async_wrapper.__dict__.update(func.__dict__)
         return async_wrapper
     else:
         def sync_wrapper(*args, **kwargs):
@@ -126,9 +131,14 @@ def with_function_logging(func):
                 # Restore handler levels
                 for handler, level in old_handler_levels:
                     handler.setLevel(level)
-        # Preserve the original function name and metadata
+        # Manually preserve metadata without setting __wrapped__ (which causes FastMCP to bypass decorator)
         sync_wrapper.__name__ = func.__name__
         sync_wrapper.__doc__ = func.__doc__
+        sync_wrapper.__module__ = func.__module__
+        sync_wrapper.__qualname__ = func.__qualname__
+        sync_wrapper.__annotations__ = func.__annotations__
+        # Also update __dict__ as functools.wraps does
+        sync_wrapper.__dict__.update(func.__dict__)
         return sync_wrapper
 
 # Custom Exception Classes
@@ -152,6 +162,10 @@ mcp = FastMCP("OmadaIdentityMCP")
 # Register MCP Prompts for workflow guidance
 from prompts import register_prompts
 register_prompts(mcp)
+
+# Register MCP Completions for autocomplete suggestions
+from completions import register_completions
+register_completions(mcp)
 
 def _build_odata_filter(field_name: str, value: str, operator: str) -> str:
     """
@@ -333,14 +347,36 @@ async def query_omada_entity(entity_type: str = "Identity",
     """
     Generic query function for any Omada entity type (Identity, Resource, Role, etc).
 
-    IMPORTANT - Identity Field Names (use EXACTLY as shown):
+    IMPORTANT - Key Identity Field Names (use EXACTLY as shown - all UPPERCASE):
+
+        Core Fields:
         - EMAIL (not "email", "MAIL", or "EMAILADDRESS")
         - FIRSTNAME (not "firstname" or "first_name")
         - LASTNAME (not "lastname" or "last_name")
         - DISPLAYNAME (not "displayname" or "display_name")
-        - EMPLOYEEID (not "employee_id")
+        - IDENTITYID (the user's login ID, not "identity_id")
+        - EMPLOYEEID (not "employee_id" or "EmployeeId")
+        - JOBTITLE (not "job_title" or "JobTitle")
         - DEPARTMENT (not "department")
+        - COMPANY (not "company")
         - STATUS (not "status")
+
+        Reference Fields (for expanding related data):
+        - JOBTITLE_REF (expands to full job title object with Id, DisplayName, etc.)
+        - COMPANY_REF (expands to full company/organization object)
+        - MANAGER_REF (expands to manager identity details)
+        - DEPARTMENT_REF (expands to full department object)
+
+        Other Important Fields:
+        - UId (32-character GUID - use for identity_id in GraphQL functions)
+        - Id (integer database ID - rarely used)
+        - LOCATION (physical location/office)
+        - COSTCENTER (cost center code)
+        - TITLE (may be different from JOBTITLE in some configurations)
+
+    Example: Querying with field and expanding reference:
+        select_fields="FIRSTNAME,LASTNAME,EMAIL,JOBTITLE,IDENTITYID,UId"
+        expand="JOBTITLE_REF,COMPANY_REF,MANAGER_REF"
 
     Args:
         entity_type: Type of entity to query (Identity, Resource, Role, Account, etc)
@@ -1899,6 +1935,16 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
     Returns:
         JSON response with detailed assignments including compliance status, violations, accounts, and resources
     """
+    # WORKAROUND: Manually set logger level since decorator isn't working for this function
+    old_level = logger.level
+    old_handler_levels = [(handler, handler.level) for handler in logger.handlers]
+
+    func_log_level = os.getenv("LOG_LEVEL_get_calculated_assignments_detailed", LOG_LEVEL).upper()
+    new_level = getattr(logging, func_log_level, logging.INFO)
+    logger.setLevel(new_level)
+    for handler in logger.handlers:
+        handler.setLevel(new_level)
+
     try:
         # Validate mandatory fields
         if not identity_id or not identity_id.strip():
@@ -1994,7 +2040,6 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
   }}
 }}"""
 
-        #print(f"GraphQL query: {query}")
         logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request with version 2.19
@@ -2062,6 +2107,11 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
             "error": str(e),
             "error_type": type(e).__name__
         }, indent=2)
+    finally:
+        # Restore logger levels (workaround for decorator not working)
+        logger.setLevel(old_level)
+        for handler, level in old_handler_levels:
+            handler.setLevel(level)
 
 
 @with_function_logging
@@ -2379,8 +2429,20 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
     """
     Make an approval decision (APPROVE or REJECT) for an access request using Omada GraphQL API.
 
-    IMPORTANT: This function requires 4 mandatory parameters. If any are missing,
-    you MUST prompt the user to provide them before calling this function.
+    ⚠️ CRITICAL SECURITY WARNING FOR CLAUDE ⚠️
+    This function performs a PERMANENT approval/rejection that affects access control.
+    You MUST get explicit human confirmation before calling this function.
+
+    MANDATORY CONFIRMATION PROTOCOL:
+    Before calling this function, you MUST:
+    1. Display the complete request details to the user (requester, resource, reason, etc.)
+    2. Ask explicitly: "Do you want to APPROVE, REJECT, or CANCEL this request?"
+    3. Wait for the user's explicit response (APPROVE/REJECT/CANCEL)
+    4. Only call this function after receiving APPROVE or REJECT from the user
+    5. If user says CANCEL, do NOT call this function
+
+    NEVER call this function without completing all steps above.
+    The user must see the request details and explicitly type their decision.
 
     REQUIRED PARAMETERS (prompt user if missing):
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
@@ -2535,6 +2597,126 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
             "error": str(e),
             "error_type": type(e).__name__
         }, indent=2)
+
+
+@with_function_logging
+@mcp.tool()
+async def get_compliance_workbench_survey_and_compliance_status(impersonate_user: str,
+                                                                omada_base_url: str = None,
+                                                                scope: str = None,
+                                                                bearer_token: str = None) -> str:
+    """
+    Get compliance workbench configuration including compliance status values and survey templates from Omada GraphQL API.
+
+    This function retrieves the compliance workbench configuration which includes:
+    - Compliance status values (name and value pairs)
+    - Survey templates (with ID, name, type, system name, and survey initiation activity ID)
+
+    IMPORTANT: This function requires 1 mandatory parameter. If missing,
+    you MUST prompt the user to provide it before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+
+    Optional parameters:
+        omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
+        scope: OAuth2 scope for the token
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
+    Returns:
+        JSON response with compliance workbench configuration including:
+        - complianceStatus: Array of {name, value} objects
+        - surveyTemplates: Array of survey template objects with id, name, type, systemName, and surveyInitiationActivityId
+    """
+    try:
+        # Validate mandatory field
+        if not impersonate_user or not impersonate_user.strip():
+            return json.dumps({
+                "status": "error",
+                "message": "Missing required field: impersonate_user",
+                "error_type": "ValidationError"
+            }, indent=2)
+
+        # Build GraphQL query (no parameters needed for this query)
+        query = """query GetComplianceWorkbenchConfiguration {
+  complianceWorkbenchConfiguration {
+    complianceStatus {
+      name
+      value
+    }
+    surveyTemplates {
+      name
+      id
+      surveyTemplateType
+      systemName
+      surveyInitiationActivityId
+    }
+  }
+}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.0
+        result = await _execute_graphql_request(
+            query,
+            impersonate_user,
+            omada_base_url,
+            scope,
+            graphql_version="3.0",
+            bearer_token=bearer_token
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract compliance workbench configuration from the GraphQL response
+            if ('data' in data and 'complianceWorkbenchConfiguration' in data['data']):
+                config = data['data']['complianceWorkbenchConfiguration']
+
+                compliance_status = config.get('complianceStatus', [])
+                survey_templates = config.get('surveyTemplates', [])
+
+                return json.dumps({
+                    "status": "success",
+                    "impersonated_user": impersonate_user,
+                    "compliance_status_count": len(compliance_status),
+                    "survey_templates_count": len(survey_templates),
+                    "compliance_status": compliance_status,
+                    "survey_templates": survey_templates,
+                    "endpoint": result["endpoint"]
+                }, indent=2)
+            else:
+                return json.dumps({
+                    "status": "no_configuration",
+                    "impersonated_user": impersonate_user,
+                    "message": "No compliance workbench configuration found in response",
+                    "response": data
+                }, indent=2)
+        else:
+            # Handle GraphQL request failure
+            error_result = {
+                "status": "error",
+                "impersonated_user": impersonate_user,
+                "error_type": result.get("error_type", "GraphQLError")
+            }
+
+            if "status_code" in result:
+                error_result["status_code"] = result["status_code"]
+            if "error" in result:
+                error_result["error"] = result["error"]
+            if "endpoint" in result:
+                error_result["endpoint"] = result["endpoint"]
+
+            return json.dumps(error_result, indent=2)
+
+    except Exception as e:
+        return json.dumps({
+            "status": "exception",
+            "impersonated_user": impersonate_user,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }, indent=2)
+
 
 if __name__ == "__main__":
     mcp.run()

@@ -93,15 +93,45 @@ I'll show you the approval details including:
 - The reason for the request
 - Workflow step information
 
-**Step 3: Make Decision**
-For each approval, you can:
-- APPROVE the request
-- REJECT the request
+**Step 3: Make Decision with Human Confirmation**
 
-I'll need:
-- Survey ID (from the approval details)
-- Survey Object Key (from the approval details)
-- Your decision (APPROVE or REJECT)
+CRITICAL SECURITY PROTOCOL - I MUST follow these steps:
+
+Before calling make_approval_decision, I will:
+
+1. Display complete request details in a clear summary:
+   ```
+   ═══════════════════════════════════════════════
+   APPROVAL DECISION SUMMARY
+   ═══════════════════════════════════════════════
+   Requester: [Full Name] ([Email])
+   Resource: [Resource Name]
+   System: [System Name]
+   Justification: [Reason provided]
+   Workflow Step: [Current approval step]
+   Survey ID: [ID]
+   Survey Object Key: [Key]
+   ═══════════════════════════════════════════════
+   ```
+
+2. Ask you explicitly:
+   "**Do you want to APPROVE, REJECT, or CANCEL this request?**
+
+   Please type one of:
+   - APPROVE (to grant access)
+   - REJECT (to deny access)
+   - CANCEL (to skip this request)"
+
+3. Wait for your explicit response
+
+4. Only call make_approval_decision AFTER you have typed APPROVE or REJECT
+
+I will NEVER call make_approval_decision without:
+- Showing you the complete request details
+- Getting your explicit APPROVE/REJECT/CANCEL response
+- Confirming your decision before execution
+
+This ensures you have full control and visibility before any approval decision is made.
 
 Let's begin! Please provide:
 1. Your email address (as approver)
@@ -554,4 +584,125 @@ Let's explore contexts! Please provide:
 2. Your bearer token
 """
 
-    print("Registered 10 MCP prompts: request_access_workflow, approve_requests_workflow, search_identity_workflow, review_assignments_workflow, authentication_workflow, troubleshooting_workflow, bulk_access_request_workflow, compliance_audit_workflow, resource_discovery_workflow, identity_context_workflow")
+    @mcp.prompt()
+    def compare_identities_workflow():
+        """
+        Guide user through comparing two identities side-by-side.
+
+        This prompt helps with detailed identity comparison including:
+        1. Finding both identities by name
+        2. Comparing organizational metadata (department, manager, etc.)
+        3. Comparing access requests
+        4. Comparing calculated assignments (current access)
+        5. Comparing assignment policies used
+        """
+        return """I'll help you perform a detailed comparison of two identities in Omada.
+
+**Identity Comparison Workflow:**
+
+This workflow will compare two users across multiple dimensions:
+- Organizational metadata (department, manager, location, etc.)
+- Active access requests
+- Current resource assignments
+- Compliance status
+- Assignment policies affecting each user
+
+**Step 1: Identify First User**
+I need to find the first identity. Please provide identifying information:
+- First name and last name, OR
+- Email address, OR
+- Employee ID
+
+**Step 2: Identify Second User**
+Now I need the second identity to compare against. Please provide:
+- First name and last name, OR
+- Email address, OR
+- Employee ID
+
+**Step 3: Retrieve Detailed Identity Data**
+For each user, I'll retrieve:
+
+**A. OData Identity Information:**
+- UId (unique identifier)
+- IdentityID (user ID)
+- Email, First Name, Last Name
+- Department, Job Title, Manager
+- Employee ID, Status
+- Location, Cost Center
+- Other organizational attributes
+
+**B. Access Requests:**
+- Active requests
+- Pending approvals
+- Recently completed requests
+- Requested resources
+
+**C. Calculated Assignments (Current Access):**
+- All assigned resources
+- Compliance status for each assignment
+- Violation details if any
+- Account information
+- Resource types and systems
+
+**D. Assignment Policy Context:**
+- Policies that grant access automatically
+- Assignment reasons
+- Resource assignment sources
+
+**Step 4: Generate Comparison Report**
+I'll provide a detailed side-by-side comparison showing:
+
+**Organizational Comparison:**
+- Departments (same/different)
+- Job titles
+- Managers (same/different)
+- Locations
+- Cost centers
+- Employment status
+
+**Access Comparison:**
+- Common resources (both have access)
+- Unique to User 1
+- Unique to User 2
+- Compliance differences
+
+**Assignment Policy Comparison:**
+- Policies affecting both users
+- Policies unique to each user
+- Automatic vs manual assignments
+
+**Access Request Comparison:**
+- Active requests for each user
+- Pending approvals
+- Request patterns
+
+**Step 5: Analysis Summary**
+I'll highlight:
+- Key similarities
+- Key differences
+- Potential access anomalies
+- Compliance concerns
+- Recommendations
+
+**Use Cases for Identity Comparison:**
+- Access certification and review
+- Role model creation (using an exemplar user)
+- Onboarding (matching new user to existing peer)
+- Offboarding verification
+- Access anomaly detection
+- Privilege analysis
+
+**Important Notes:**
+- Uses UId field (32-char GUID) for identity lookups
+- Retrieves full organizational context
+- Compares actual assignments (not just roles)
+- Includes compliance and violation data
+
+**Ready to compare?** Please provide:
+1. Identifying information for the first user (name, email, or employee ID)
+2. Identifying information for the second user (name, email, or employee ID)
+3. Your bearer token for authentication
+4. Email address to impersonate for the queries
+"""
+
+    print("Registered 11 MCP prompts: request_access_workflow, approve_requests_workflow, search_identity_workflow, review_assignments_workflow, authentication_workflow, troubleshooting_workflow, bulk_access_request_workflow, compliance_audit_workflow, resource_discovery_workflow, identity_context_workflow, compare_identities_workflow")
