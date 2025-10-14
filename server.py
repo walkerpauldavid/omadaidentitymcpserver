@@ -10,6 +10,9 @@ import json
 import urllib.parse
 import logging
 
+# Import helper functions for code simplification
+from helpers import validate_required_fields, build_error_response, build_success_response
+
 # Load environment variables
 load_dotenv()
 
@@ -2139,24 +2142,13 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
     Returns:
         JSON response with contexts data or error message
     """
+    # Validate mandatory fields
+    error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
+    if error:
+        return error
+
     try:
         logger.debug(f"get_identity_contexts called with identity_id={identity_id}, impersonate_user={impersonate_user}")
-
-        # Validate mandatory fields
-        if not identity_id or not identity_id.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: identity_id",
-                "error_type": "ValidationError"
-            }, indent=2)
-
-        if not impersonate_user or not impersonate_user.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: impersonate_user",
-                "error_type": "ValidationError"
-            }, indent=2)
-
         logger.debug(f"Validation passed, building GraphQL query for identity_id: {identity_id}")
 
         # Build GraphQL query with the provided identity_id
@@ -2182,48 +2174,38 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
                 access_request_components = data['data']['accessRequestComponents']
                 contexts = access_request_components.get('contexts', [])
 
-                return json.dumps({
-                    "status": "success",
-                    "identity_id": identity_id,
-                    "impersonated_user": impersonate_user,
-                    "contexts_count": len(contexts),
-                    "contexts": contexts,
-                    "endpoint": result["endpoint"]
-                }, indent=2)
+                return build_success_response(
+                    data=contexts,
+                    endpoint=result["endpoint"],
+                    identity_id=identity_id,
+                    impersonated_user=impersonate_user,
+                    contexts_count=len(contexts),
+                    contexts=contexts
+                )
             else:
-                return json.dumps({
-                    "status": "no_contexts",
-                    "identity_id": identity_id,
-                    "impersonated_user": impersonate_user,
-                    "message": "No contexts found in response",
-                    "response": data
-                }, indent=2)
+                return build_error_response(
+                    error_type="NoDataFound",
+                    message="No contexts found in response",
+                    identity_id=identity_id,
+                    impersonated_user=impersonate_user,
+                    response=data
+                )
         else:
             # Handle GraphQL request failure
-            error_result = {
-                "status": "error",
-                "identity_id": identity_id,
-                "impersonated_user": impersonate_user,
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "status_code" in result:
-                error_result["status_code"] = result["status_code"]
-            if "error" in result:
-                error_result["error"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            return json.dumps(error_result, indent=2)
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                identity_id=identity_id,
+                impersonated_user=impersonate_user
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "exception",
-            "identity_id": identity_id,
-            "impersonated_user": impersonate_user,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            identity_id=identity_id,
+            impersonated_user=impersonate_user
+        )
 
 
 @with_function_logging
@@ -2251,34 +2233,42 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
         scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
+    ⚠️ IMPORTANT FOR CLAUDE - DISPLAY TO USER:
+    When presenting pending approvals to the user, you MUST ALWAYS include:
+    - Resource Name (resourceAssignment.resource.name)
+    - System Name (resourceAssignment.resource.system.name)
+    - Workflow Step (workflowStep)
+    - Reason/Justification (reason)
+
+    These fields provide essential context for the user to understand what access
+    is being requested and make informed approval decisions.
+
     Returns:
-        JSON response with pending approval survey questions or error message
+        JSON response with pending approval survey questions including resource and system details,
+        or error message if the request fails
     """
     try:
-        # Validate mandatory fields
-        if not impersonate_user or not impersonate_user.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: impersonate_user",
-                "error_type": "ValidationError"
-            }, indent=2)
+        # Validate mandatory fields using helper
+        error = validate_required_fields(impersonate_user=impersonate_user)
+        if error:
+            return error
 
         # Validate workflow_step if provided
         valid_workflow_steps = ["ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval"]
         if workflow_step and workflow_step not in valid_workflow_steps:
-            return json.dumps({
-                "status": "error",
-                "message": f"Invalid workflow_step '{workflow_step}'. Must be one of: {', '.join(valid_workflow_steps)}",
-                "error_type": "ValidationError"
-            }, indent=2)
+            return build_error_response(
+                error_type="ValidationError",
+                message=f"Invalid workflow_step '{workflow_step}'. Must be one of: {', '.join(valid_workflow_steps)}",
+                impersonated_user=impersonate_user,
+                workflow_step_filter=workflow_step
+            )
 
-        # Build GraphQL query
-        if workflow_step:
-            # With filter
-            query = f"""query myAccessRequestApprovalSurveyQuestions {{
-  accessRequestApprovalSurveyQuestions(
-    filters: {{workflowStep: {{filterValue: "{workflow_step}", operator: EQUALS}}}}
-  ) {{
+        # Build filter clause conditionally
+        filter_clause = f'(filters: {{workflowStep: {{filterValue: "{workflow_step}", operator: EQUALS}}}})' if workflow_step else ''
+
+        # Build GraphQL query with conditional filter
+        query = f"""query myAccessRequestApprovalSurveyQuestions {{
+  accessRequestApprovalSurveyQuestions{filter_clause} {{
     pages
     total
     data {{
@@ -2288,25 +2278,23 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
       workflowStep
       history
       workflowStepTitle
+      resourceAssignment {{
+        resource {{
+          id
+          name
+          system {{
+            id
+            name
+          }}
+          resourceType {{
+            name
+            id
+          }}
+        }}
+      }}
     }}
   }}
 }}"""
-        else:
-            # Without filter - get all pending approvals
-            query = """query myAccessRequestApprovalSurveyQuestions {
-  accessRequestApprovalSurveyQuestions {
-    pages
-    total
-    data {
-      reason
-      surveyId
-      surveyObjectKey
-      workflowStep
-      history
-      workflowStepTitle
-    }
-  }
-}"""
 
         logger.debug(f"GraphQL query: {query}")
 
@@ -2337,17 +2325,17 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
                     response_data = _summarize_graphql_data(questions_data, "PendingApproval")
                     logger.debug(f"Summarized data fields: {list(response_data[0].keys()) if response_data else []}")
 
-                return json.dumps({
-                    "status": "success",
-                    "impersonated_user": impersonate_user,
-                    "workflow_step_filter": workflow_step if workflow_step else "none",
-                    "total_approvals": total,
-                    "pages": pages,
-                    "approvals_returned": len(response_data),
-                    "summary_mode": summary_mode,
-                    "approvals": response_data,
-                    "endpoint": result["endpoint"]
-                }, indent=2)
+                return build_success_response(
+                    data=response_data,
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    workflow_step_filter=workflow_step if workflow_step else "none",
+                    total_approvals=total,
+                    pages=pages,
+                    approvals_returned=len(response_data),
+                    summary_mode=summary_mode,
+                    approvals=response_data
+                )
             else:
                 return json.dumps({
                     "status": "no_approvals",
@@ -2357,31 +2345,21 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
                     "response": data
                 }, indent=2)
         else:
-            # Handle GraphQL request failure
-            error_result = {
-                "status": "error",
-                "impersonated_user": impersonate_user,
-                "workflow_step_filter": workflow_step if workflow_step else "none",
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "status_code" in result:
-                error_result["status_code"] = result["status_code"]
-            if "error" in result:
-                error_result["error"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            return json.dumps(error_result, indent=2)
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+                workflow_step_filter=workflow_step if workflow_step else "none"
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "exception",
-            "impersonated_user": impersonate_user,
-            "workflow_step_filter": workflow_step if workflow_step else "none",
-            "error": str(e),
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+            workflow_step_filter=workflow_step if workflow_step else "none"
+        )
 
 
 @with_function_logging
@@ -2630,13 +2608,10 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
         - surveyTemplates: Array of survey template objects with id, name, type, systemName, and surveyInitiationActivityId
     """
     try:
-        # Validate mandatory field
-        if not impersonate_user or not impersonate_user.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: impersonate_user",
-                "error_type": "ValidationError"
-            }, indent=2)
+        # Validate mandatory field using helper
+        error = validate_required_fields(impersonate_user=impersonate_user)
+        if error:
+            return error
 
         # Build GraphQL query (no parameters needed for this query)
         query = """query GetComplianceWorkbenchConfiguration {
@@ -2676,15 +2651,16 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
                 compliance_status = config.get('complianceStatus', [])
                 survey_templates = config.get('surveyTemplates', [])
 
-                return json.dumps({
-                    "status": "success",
-                    "impersonated_user": impersonate_user,
-                    "compliance_status_count": len(compliance_status),
-                    "survey_templates_count": len(survey_templates),
-                    "compliance_status": compliance_status,
-                    "survey_templates": survey_templates,
-                    "endpoint": result["endpoint"]
-                }, indent=2)
+                return build_success_response(
+                    data={
+                        "compliance_status": compliance_status,
+                        "survey_templates": survey_templates
+                    },
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    compliance_status_count=len(compliance_status),
+                    survey_templates_count=len(survey_templates)
+                )
             else:
                 return json.dumps({
                     "status": "no_configuration",
@@ -2693,29 +2669,19 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
                     "response": data
                 }, indent=2)
         else:
-            # Handle GraphQL request failure
-            error_result = {
-                "status": "error",
-                "impersonated_user": impersonate_user,
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "status_code" in result:
-                error_result["status_code"] = result["status_code"]
-            if "error" in result:
-                error_result["error"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            return json.dumps(error_result, indent=2)
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "exception",
-            "impersonated_user": impersonate_user,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user
+        )
 
 
 if __name__ == "__main__":
