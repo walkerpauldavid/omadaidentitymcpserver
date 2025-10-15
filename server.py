@@ -589,13 +589,13 @@ async def query_omada_entity(entity_type: str = "Identity",
                 if count_only:
                     # Return just the count
                     count = data.get("@odata.count", len(data.get("value", [])))
-                    result = {
-                        "status": "success",
-                        "entity_type": entity_type,
-                        "count": count,
-                        "filter": query_params.get('$filter', 'none'),
-                        "endpoint": endpoint_url
-                    }
+                    return build_success_response(
+                        data=None,
+                        endpoint=endpoint_url,
+                        entity_type=entity_type,
+                        count=count,
+                        filter=query_params.get('$filter', 'none')
+                    )
                 else:
                     # Return full data with metadata
                     entities_found = len(data.get("value", []))
@@ -606,22 +606,24 @@ async def query_omada_entity(entity_type: str = "Identity",
                     if summary_mode:
                         response_data = _summarize_entities(data, entity_type)
 
-                    result = {
-                        "status": "success",
+                    # Build response with entity-specific metadata
+                    extra_fields = {
                         "entity_type": entity_type,
                         "entities_returned": entities_found,
                         "total_count": total_count,
                         "filter": query_params.get('$filter', 'none'),
-                        "endpoint": endpoint_url,
-                        "summary_mode": summary_mode,
-                        "data": response_data
+                        "summary_mode": summary_mode
                     }
 
                     # Add entity-specific metadata
                     if entity_type == "Resource" and resource_type_id:
-                        result["resource_type_id"] = resource_type_id
+                        extra_fields["resource_type_id"] = resource_type_id
 
-                return json.dumps(result, indent=2)
+                    return build_success_response(
+                        data=response_data,
+                        endpoint=endpoint_url,
+                        **extra_fields
+                    )
             elif response.status_code == 400:
                 raise ODataQueryError(f"Bad request - invalid OData query: {response.text[:200]}", response.status_code)
             elif response.status_code == 401:
@@ -636,15 +638,30 @@ async def query_omada_entity(entity_type: str = "Identity",
                 raise OmadaServerError(f"Unexpected response: {response.status_code}", response.status_code, response.text)
                 
     except AuthenticationError as e:
-        return f"🔐 Authentication Error: {str(e)}"
+        return build_error_response(
+            error_type="AuthenticationError",
+            message=str(e)
+        )
     except ODataQueryError as e:
-        return f"🔍 Query Error: {str(e)}"
+        return build_error_response(
+            error_type="ODataQueryError",
+            message=str(e)
+        )
     except OmadaServerError as e:
-        return f"🚨 Server Error: {str(e)}"
+        return build_error_response(
+            error_type="OmadaServerError",
+            message=str(e)
+        )
     except httpx.RequestError as e:
-        return f"🌐 Network Error: {str(e)}"
+        return build_error_response(
+            error_type="NetworkError",
+            message=str(e)
+        )
     except Exception as e:
-        return f"❌ Unexpected Error: {str(e)}"
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e)
+        )
 
 @with_function_logging
 @mcp.tool()
@@ -976,14 +993,13 @@ async def check_omada_config() -> str:
         config["note"] = "OAuth token functions have been migrated to oauth_mcp_server. All Omada functions require bearer_token parameter."
         config["usage_example"] = "get_pending_approvals(impersonate_user='user@domain.com', bearer_token='eyJ0...')"
 
-        return json.dumps(config, indent=2)
+        return build_success_response(data=config)
 
     except Exception as e:
-        return json.dumps({
-            "status": "ERROR",
-            "error": str(e),
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e)
+        )
 
 async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = None, scope: str = None, graphql_version: str = None, bearer_token: str = None):
     """
@@ -1198,50 +1214,37 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
                 if summary_mode:
                     response_data = _summarize_graphql_data(access_requests, "AccessRequest")
 
-                formatted_result = {
-                    "status": "success",
-                    "impersonated_user": impersonate_user,
-                    "total_requests": total,
-                    "requests_returned": len(response_data),
-                    "filter_applied": f"{filter_field}={filter_value}" if filter_field else "none",
-                    "summary_mode": summary_mode,
-                    "endpoint": result["endpoint"],
-                    "data": {
-                        "access_requests": response_data
-                    }
-                }
-
-                return json.dumps(formatted_result, indent=2)
+                return build_success_response(
+                    data={"access_requests": response_data},
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    total_requests=total,
+                    requests_returned=len(response_data),
+                    filter_applied=f"{filter_field}={filter_value}" if filter_field else "none",
+                    summary_mode=summary_mode
+                )
             else:
-                return json.dumps({
-                    "status": "error",
-                    "message": "No access requests data found in response",
-                    "impersonated_user": impersonate_user,
-                    "raw_response": data
-                }, indent=2)
+                return build_error_response(
+                    error_type="DataError",
+                    message="No access requests data found in response",
+                    impersonated_user=impersonate_user,
+                    raw_response=data
+                )
         else:
-            # Handle GraphQL request failure
-            error_result = {
-                "status": "error",
-                "message": f"GraphQL request failed with status {result.get('status_code', 'unknown')}",
-                "impersonated_user": impersonate_user,
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "error" in result:
-                error_result["response_body"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            return json.dumps(error_result, indent=2)
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                message=f"GraphQL request failed with status {result.get('status_code', 'unknown')}",
+                impersonated_user=impersonate_user
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Error getting access requests: {str(e)}",
-            "impersonated_user": impersonate_user,
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=f"Error getting access requests: {str(e)}",
+            impersonated_user=impersonate_user
+        )
 
 @with_function_logging
 @mcp.tool()
@@ -1281,35 +1284,15 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
         JSON string containing the created access request ID or error information
     """
     try:
-        # Validate mandatory fields
-        if not impersonate_user or not impersonate_user.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: impersonate_user",
-                "error_type": "ValidationError"
-            }, indent=2)
-
-        if not reason or not reason.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: reason",
-                "error_type": "ValidationError"
-            }, indent=2)
-
-
-        if not context or not context.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: context",
-                "error_type": "ValidationError"
-            }, indent=2)
-
-        if not resources or not resources.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: resources",
-                "error_type": "ValidationError"
-            }, indent=2)
+        # Validate mandatory fields using helper
+        error = validate_required_fields(
+            impersonate_user=impersonate_user,
+            reason=reason,
+            context=context,
+            resources=resources
+        )
+        if error:
+            return error
 
         # Get identity ID from the impersonate_user email
         logger.debug(f"Looking up identity ID for email: {impersonate_user}")
@@ -1326,33 +1309,30 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
         try:
             identity_data = json.loads(identity_result)
             if identity_data.get("status") != "success" or not identity_data.get("data", {}).get("value"):
-                return json.dumps({
-                    "status": "error",
-                    "message": f"Could not find identity for email: {impersonate_user}",
-                    "error_type": "IdentityLookupError",
-                    "lookup_result": identity_data
-                }, indent=2)
+                return build_error_response(
+                    error_type="IdentityLookupError",
+                    message=f"Could not find identity for email: {impersonate_user}",
+                    lookup_result=identity_data
+                )
 
             identity_entity = identity_data["data"]["value"][0]
             identity_id = str(identity_entity.get("UId"))
 
             if not identity_id:
-                return json.dumps({
-                    "status": "error",
-                    "message": f"Identity found but no ID available for email: {impersonate_user}",
-                    "error_type": "IdentityLookupError",
-                    "identity_data": identity_entity
-                }, indent=2)
+                return build_error_response(
+                    error_type="IdentityLookupError",
+                    message=f"Identity found but no ID available for email: {impersonate_user}",
+                    identity_data=identity_entity
+                )
 
             logger.debug(f"Found identity ID: {identity_id} for {impersonate_user}")
 
         except (json.JSONDecodeError, KeyError, IndexError) as e:
-            return json.dumps({
-                "status": "error",
-                "message": f"Failed to parse identity lookup result: {str(e)}",
-                "error_type": "IdentityLookupParseError",
-                "raw_result": identity_result
-            }, indent=2)
+            return build_error_response(
+                error_type="IdentityLookupParseError",
+                message=f"Failed to parse identity lookup result: {str(e)}",
+                raw_result=identity_result
+            )
 
         # Build the GraphQL mutation with template variables filled in
         valid_from_clause = f'validFrom: "{valid_from}",' if valid_from else ''
@@ -1415,108 +1395,97 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
                     if len(create_request_response) > 0:
                         access_request_data = create_request_response[0]
                     else:
-                        return json.dumps({
-                            "status": "error",
-                            "message": "Empty response from createAccessRequest",
-                            "impersonated_user": impersonate_user,
-                            "raw_response": data,
-                            "http_debug": {
+                        return build_error_response(
+                            error_type="EmptyResponse",
+                            message="Empty response from createAccessRequest",
+                            impersonated_user=impersonate_user,
+                            raw_response=data,
+                            http_debug={
                                 "raw_request_body": result.get("raw_request_body"),
                                 "raw_response_body": result.get("raw_response_body"),
                                 "request_headers": result.get("request_headers")
                             }
-                        }, indent=2)
+                        )
                 else:
                     access_request_data = create_request_response
 
                 access_request_id = access_request_data.get("id")
 
-                formatted_result = {
-                    "status": "success",
-                    "message": "Access request created successfully",
-                    "impersonated_user": impersonate_user,
-                    "access_request_id": access_request_id,
-                    "endpoint": result["endpoint"],
-                    "access_request_details": {
-                        "id": access_request_id,
-                        "status": access_request_data.get("status"),
-                        "resource": access_request_data.get("resource"),
-                        "validFrom": access_request_data.get("validFrom"),
-                        "validTo": access_request_data.get("validTo")
+                return build_success_response(
+                    data={
+                        "access_request_details": {
+                            "id": access_request_id,
+                            "status": access_request_data.get("status"),
+                            "resource": access_request_data.get("resource"),
+                            "validFrom": access_request_data.get("validFrom"),
+                            "validTo": access_request_data.get("validTo")
+                        },
+                        "request_details": {
+                            "reason": reason,
+                            "identity_id": identity_id,
+                            "identity_email": impersonate_user,
+                            "resources": resources,
+                            "valid_from": valid_from,
+                            "valid_to": valid_to,
+                            "context": context
+                        },
+                        "http_debug": {
+                            "raw_request_body": result.get("raw_request_body"),
+                            "raw_response_body": result.get("raw_response_body"),
+                            "request_headers": result.get("request_headers")
+                        }
                     },
-                    "request_details": {
-                        "reason": reason,
-                        "identity_id": identity_id,
-                        "identity_email": impersonate_user,
-                        "resources": resources,
-                        "valid_from": valid_from,
-                        "valid_to": valid_to,
-                        "context": context
-                    },
-                    "http_debug": {
-                        "raw_request_body": result.get("raw_request_body"),
-                        "raw_response_body": result.get("raw_response_body"),
-                        "request_headers": result.get("request_headers")
-                    }
-                }
-
-                return json.dumps(formatted_result, indent=2)
+                    endpoint=result["endpoint"],
+                    message="Access request created successfully",
+                    impersonated_user=impersonate_user,
+                    access_request_id=access_request_id
+                )
             elif "errors" in data:
                 # Handle GraphQL errors
-                return json.dumps({
-                    "status": "error",
-                    "message": "GraphQL mutation failed",
-                    "impersonated_user": impersonate_user,
-                    "errors": data["errors"],
-                    "endpoint": result["endpoint"],
-                    "http_debug": {
+                return build_error_response(
+                    error_type="GraphQLError",
+                    message="GraphQL mutation failed",
+                    impersonated_user=impersonate_user,
+                    errors=data["errors"],
+                    endpoint=result["endpoint"],
+                    http_debug={
                         "raw_request_body": result.get("raw_request_body"),
                         "raw_response_body": result.get("raw_response_body"),
                         "request_headers": result.get("request_headers")
                     }
-                }, indent=2)
+                )
             else:
-                return json.dumps({
-                    "status": "error",
-                    "message": "Unexpected response format",
-                    "impersonated_user": impersonate_user,
-                    "raw_response": data,
-                    "http_debug": {
+                return build_error_response(
+                    error_type="UnexpectedResponse",
+                    message="Unexpected response format",
+                    impersonated_user=impersonate_user,
+                    raw_response=data,
+                    http_debug={
                         "raw_request_body": result.get("raw_request_body"),
                         "raw_response_body": result.get("raw_response_body"),
                         "request_headers": result.get("request_headers")
                     }
-                }, indent=2)
+                )
         else:
-            # Handle HTTP request failure
-            error_result = {
-                "status": "error",
-                "message": f"GraphQL request failed with status {result.get('status_code', 'unknown')}",
-                "impersonated_user": impersonate_user,
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "error" in result:
-                error_result["response_body"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            # Add HTTP debug information
-            error_result["http_debug"] = {
-                "raw_request_body": result.get("raw_request_body"),
-                "raw_response_body": result.get("raw_response_body"),
-                "request_headers": result.get("request_headers")
-            }
-
-            return json.dumps(error_result, indent=2)
+            # Handle HTTP request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                message=f"GraphQL request failed with status {result.get('status_code', 'unknown')}",
+                impersonated_user=impersonate_user,
+                http_debug={
+                    "raw_request_body": result.get("raw_request_body"),
+                    "raw_response_body": result.get("raw_response_body"),
+                    "request_headers": result.get("request_headers")
+                }
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Error creating access request: {str(e)}",
-            "impersonated_user": impersonate_user,
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=f"Error creating access request: {str(e)}",
+            impersonated_user=impersonate_user
+        )
 
 @with_function_logging
 @mcp.tool()
@@ -1576,31 +1545,20 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         JSON response with resources data or error message
     """
     try:
-        # Validate mandatory fields
-        if not identity_id or not identity_id.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: identity_id",
-                "error_type": "ValidationError"
-            }, indent=2)
+        # Validate mandatory fields using helper
+        error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
+        if error:
+            return error
 
         # Validate that identity_id is a UUID (32 characters), not an integer Id
         if identity_id.strip().isdigit():
-            return json.dumps({
-                "status": "error",
-                "message": f"Invalid identity_id: '{identity_id}' appears to be an integer Id field, but this function requires the UId field (32-character UUID). "
-                           f"When you query an Identity, you get both 'Id' (integer like 1006715) and 'UId' (UUID like 'e3e869c4-369a-476e-a969-d57059d0b1e4'). "
-                           f"You MUST use the UId field, not the Id field.",
-                "error_type": "ValidationError",
-                "hint": "Query the identity first, then extract the 'UId' field (not 'Id') from the response"
-            }, indent=2)
-
-        if not impersonate_user or not impersonate_user.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: impersonate_user",
-                "error_type": "ValidationError"
-            }, indent=2)
+            return build_error_response(
+                error_type="ValidationError",
+                message=f"Invalid identity_id: '{identity_id}' appears to be an integer Id field, but this function requires the UId field (32-character UUID). "
+                        f"When you query an Identity, you get both 'Id' (integer like 1006715) and 'UId' (UUID like 'e3e869c4-369a-476e-a969-d57059d0b1e4'). "
+                        f"You MUST use the UId field, not the Id field.",
+                hint="Query the identity first, then extract the 'UId' field (not 'Id') from the response"
+            )
 
         # Build the filters object dynamically based on provided parameters
         filters = f'beneficiaryIds: "{identity_id}"'
@@ -1653,50 +1611,40 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                 access_request_components = data['data']['accessRequestComponents']
                 resources = access_request_components.get('resources', {}).get('data', [])
 
-                return json.dumps({
-                    "status": "success",
-                    "beneficiary_id": identity_id,
-                    "impersonated_user": impersonate_user,
-                    "system_id": system_id,
-                    "context_id": context_id,
-                    "resources_count": len(resources),
-                    "resources": resources,
-                    "endpoint": result["endpoint"]
-                }, indent=2)
+                return build_success_response(
+                    data=resources,
+                    endpoint=result["endpoint"],
+                    beneficiary_id=identity_id,
+                    impersonated_user=impersonate_user,
+                    system_id=system_id,
+                    context_id=context_id,
+                    resources_count=len(resources),
+                    resources=resources
+                )
             else:
-                return json.dumps({
-                    "status": "no_resources",
-                    "beneficiary_id": identity_id,
-                    "impersonated_user": impersonate_user,
-                    "message": "No resources found in response",
-                    "response": data
-                }, indent=2)
+                return build_error_response(
+                    error_type="NoResourcesFound",
+                    message="No resources found in response",
+                    beneficiary_id=identity_id,
+                    impersonated_user=impersonate_user,
+                    response=data
+                )
         else:
-            # Handle GraphQL request failure
-            error_result = {
-                "status": "error",
-                "beneficiary_id": identity_id,
-                "impersonated_user": impersonate_user,
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "status_code" in result:
-                error_result["status_code"] = result["status_code"]
-            if "error" in result:
-                error_result["error"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            return json.dumps(error_result, indent=2)
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                beneficiary_id=identity_id,
+                impersonated_user=impersonate_user
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "exception",
-            "beneficiary_id": identity_id,
-            "impersonated_user": impersonate_user,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            beneficiary_id=identity_id,
+            impersonated_user=impersonate_user
+        )
 
 
 @with_function_logging
@@ -1850,12 +1798,12 @@ async def get_identities_for_beneficiary(impersonate_user: str,
                     identities=identities
                 )
             else:
-                return json.dumps({
-                    "status": "no_identities",
-                    "impersonated_user": impersonate_user,
-                    "message": "No identities found in response",
-                    "response": data
-                }, indent=2)
+                return build_error_response(
+                    error_type="NoIdentitiesFound",
+                    message="No identities found in response",
+                    impersonated_user=impersonate_user,
+                    response=data
+                )
         else:
             # Handle GraphQL request failure using helper
             return build_error_response(
@@ -1934,20 +1882,10 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
         handler.setLevel(new_level)
 
     try:
-        # Validate mandatory fields
-        if not identity_id or not identity_id.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: identity_id",
-                "error_type": "ValidationError"
-            }, indent=2)
-
-        if not impersonate_user or not impersonate_user.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: impersonate_user",
-                "error_type": "ValidationError"
-            }, indent=2)
+        # Validate mandatory fields using helper
+        error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
+        if error:
+            return error
 
         # Build the filters object dynamically based on provided parameters
         filters = []
@@ -2049,52 +1987,42 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
                 total = calculated_assignments.get('total', 0)
                 pages = calculated_assignments.get('pages', 0)
 
-                return json.dumps({
-                    "status": "success",
-                    "identity_id": identity_id,
-                    "impersonated_user": impersonate_user,
-                    "resource_type_name": resource_type_name,
-                    "compliance_status": compliance_status,
-                    "total_assignments": total,
-                    "pages": pages,
-                    "assignments_returned": len(assignments_data),
-                    "assignments": assignments_data,
-                    "endpoint": result["endpoint"]
-                }, indent=2)
+                return build_success_response(
+                    data=assignments_data,
+                    endpoint=result["endpoint"],
+                    identity_id=identity_id,
+                    impersonated_user=impersonate_user,
+                    resource_type_name=resource_type_name,
+                    compliance_status=compliance_status,
+                    total_assignments=total,
+                    pages=pages,
+                    assignments_returned=len(assignments_data),
+                    assignments=assignments_data
+                )
             else:
-                return json.dumps({
-                    "status": "no_assignments",
-                    "identity_id": identity_id,
-                    "impersonated_user": impersonate_user,
-                    "message": "No calculated assignments found in response",
-                    "response": data
-                }, indent=2)
+                return build_error_response(
+                    error_type="NoAssignmentsFound",
+                    message="No calculated assignments found in response",
+                    identity_id=identity_id,
+                    impersonated_user=impersonate_user,
+                    response=data
+                )
         else:
-            # Handle GraphQL request failure
-            error_result = {
-                "status": "error",
-                "identity_id": identity_id,
-                "impersonated_user": impersonate_user,
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "status_code" in result:
-                error_result["status_code"] = result["status_code"]
-            if "error" in result:
-                error_result["error"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            return json.dumps(error_result, indent=2)
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                identity_id=identity_id,
+                impersonated_user=impersonate_user
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "exception",
-            "identity_id": identity_id,
-            "impersonated_user": impersonate_user,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            identity_id=identity_id,
+            impersonated_user=impersonate_user
+        )
     finally:
         # Restore logger levels (workaround for decorator not working)
         logger.setLevel(old_level)
@@ -2322,13 +2250,13 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
                     approvals=response_data
                 )
             else:
-                return json.dumps({
-                    "status": "no_approvals",
-                    "impersonated_user": impersonate_user,
-                    "workflow_step_filter": workflow_step if workflow_step else "none",
-                    "message": "No pending approvals found in response",
-                    "response": data
-                }, indent=2)
+                return build_error_response(
+                    error_type="NoApprovalsFound",
+                    message="No pending approvals found in response",
+                    impersonated_user=impersonate_user,
+                    workflow_step_filter=workflow_step if workflow_step else "none",
+                    response=data
+                )
         else:
             # Handle GraphQL request failure using helper
             return build_error_response(
@@ -2426,44 +2354,24 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
         JSON response with approval submission result or error message
     """
     try:
-        # Validate mandatory fields
-        if not impersonate_user or not impersonate_user.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: impersonate_user",
-                "error_type": "ValidationError"
-            }, indent=2)
-
-        if not survey_id or not survey_id.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: survey_id",
-                "error_type": "ValidationError"
-            }, indent=2)
-
-        if not survey_object_key or not survey_object_key.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: survey_object_key",
-                "error_type": "ValidationError"
-            }, indent=2)
-
-        if not decision or not decision.strip():
-            return json.dumps({
-                "status": "error",
-                "message": "Missing required field: decision",
-                "error_type": "ValidationError"
-            }, indent=2)
+        # Validate mandatory fields using helper
+        error = validate_required_fields(
+            impersonate_user=impersonate_user,
+            survey_id=survey_id,
+            survey_object_key=survey_object_key,
+            decision=decision
+        )
+        if error:
+            return error
 
         # Validate decision value
         valid_decisions = ["APPROVE", "REJECT"]
         decision_upper = decision.strip().upper()
         if decision_upper not in valid_decisions:
-            return json.dumps({
-                "status": "error",
-                "message": f"Invalid decision '{decision}'. Must be one of: {', '.join(valid_decisions)}",
-                "error_type": "ValidationError"
-            }, indent=2)
+            return build_error_response(
+                error_type="ValidationError",
+                message=f"Invalid decision '{decision}'. Must be one of: {', '.join(valid_decisions)}"
+            )
 
         # Build GraphQL mutation
         mutation = f"""mutation makeApprovalDecision {{
@@ -2499,67 +2407,56 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
                 submission_result = data['data']['submitRequestQuestions']
                 questions_submitted = submission_result.get('questionsSuccessfullySubmitted', False)
 
-                return json.dumps({
-                    "status": "success",
-                    "impersonated_user": impersonate_user,
-                    "survey_id": survey_id,
-                    "survey_object_key": survey_object_key,
-                    "decision": decision_upper,
-                    "questions_successfully_submitted": questions_submitted,
-                    "endpoint": result["endpoint"]
-                }, indent=2)
+                return build_success_response(
+                    data={"questions_successfully_submitted": questions_submitted},
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    survey_id=survey_id,
+                    survey_object_key=survey_object_key,
+                    decision=decision_upper
+                )
             elif "errors" in data:
                 # Handle GraphQL errors
-                return json.dumps({
-                    "status": "error",
-                    "message": "GraphQL mutation failed",
-                    "impersonated_user": impersonate_user,
-                    "survey_id": survey_id,
-                    "survey_object_key": survey_object_key,
-                    "decision": decision_upper,
-                    "errors": data["errors"],
-                    "endpoint": result["endpoint"]
-                }, indent=2)
+                return build_error_response(
+                    error_type="GraphQLError",
+                    message="GraphQL mutation failed",
+                    impersonated_user=impersonate_user,
+                    survey_id=survey_id,
+                    survey_object_key=survey_object_key,
+                    decision=decision_upper,
+                    errors=data["errors"],
+                    endpoint=result["endpoint"]
+                )
             else:
-                return json.dumps({
-                    "status": "error",
-                    "message": "Unexpected response format from submitRequestQuestions",
-                    "impersonated_user": impersonate_user,
-                    "survey_id": survey_id,
-                    "survey_object_key": survey_object_key,
-                    "decision": decision_upper,
-                    "response": data
-                }, indent=2)
+                return build_error_response(
+                    error_type="UnexpectedResponse",
+                    message="Unexpected response format from submitRequestQuestions",
+                    impersonated_user=impersonate_user,
+                    survey_id=survey_id,
+                    survey_object_key=survey_object_key,
+                    decision=decision_upper,
+                    response=data
+                )
         else:
-            # Handle GraphQL request failure
-            error_result = {
-                "status": "error",
-                "impersonated_user": impersonate_user,
-                "survey_id": survey_id,
-                "survey_object_key": survey_object_key,
-                "decision": decision_upper,
-                "error_type": result.get("error_type", "GraphQLError")
-            }
-
-            if "status_code" in result:
-                error_result["status_code"] = result["status_code"]
-            if "error" in result:
-                error_result["error"] = result["error"]
-            if "endpoint" in result:
-                error_result["endpoint"] = result["endpoint"]
-
-            return json.dumps(error_result, indent=2)
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+                survey_id=survey_id,
+                survey_object_key=survey_object_key,
+                decision=decision_upper
+            )
 
     except Exception as e:
-        return json.dumps({
-            "status": "exception",
-            "impersonated_user": impersonate_user,
-            "survey_id": survey_id if 'survey_id' in locals() else "N/A",
-            "survey_object_key": survey_object_key if 'survey_object_key' in locals() else "N/A",
-            "decision": decision if 'decision' in locals() else "N/A",
-            "error": str(e),
-            "error_type": type(e).__name__
-        }, indent=2)
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+            survey_id=survey_id if 'survey_id' in locals() else "N/A",
+            survey_object_key=survey_object_key if 'survey_object_key' in locals() else "N/A",
+            decision=decision if 'decision' in locals() else "N/A"
+        )
 
 
 @with_function_logging
@@ -2647,12 +2544,12 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
                     survey_templates_count=len(survey_templates)
                 )
             else:
-                return json.dumps({
-                    "status": "no_configuration",
-                    "impersonated_user": impersonate_user,
-                    "message": "No compliance workbench configuration found in response",
-                    "response": data
-                }, indent=2)
+                return build_error_response(
+                    error_type="NoConfigurationFound",
+                    message="No compliance workbench configuration found in response",
+                    impersonated_user=impersonate_user,
+                    response=data
+                )
         else:
             # Handle GraphQL request failure using helper
             return build_error_response(
