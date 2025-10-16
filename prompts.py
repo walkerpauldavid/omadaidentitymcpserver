@@ -631,20 +631,30 @@ For each user, I'll retrieve:
 - Location, Cost Center
 - Other organizational attributes
 
-**B. Access Requests:**
-- Active requests
-- Pending approvals
-- Recently completed requests
-- Requested resources
+**B. Access Requests (using get_access_requests):**
+I'll query access requests for each user by filtering on their identity:
+- Active access requests (status: PENDING, IN_PROGRESS)
+- Completed requests (status: APPROVED, REJECTED)
+- Requested resources and systems
+- Request timestamps and justifications
+- Current approval status
 
-**C. Calculated Assignments (Current Access):**
+**C. Pending Approvals (using get_pending_approvals):**
+If users are approvers, I'll retrieve:
+- Requests waiting for their approval
+- Workflow step they're approving at
+- Requester information
+- Resource details
+- Survey IDs for approval tracking
+
+**D. Calculated Assignments (Current Access):**
 - All assigned resources
 - Compliance status for each assignment
 - Violation details if any
 - Account information
 - Resource types and systems
 
-**D. Assignment Policy Context:**
+**E. Assignment Policy Context:**
 - Policies that grant access automatically
 - Assignment reasons
 - Resource assignment sources
@@ -660,43 +670,63 @@ I'll provide a detailed side-by-side comparison showing:
 - Cost centers
 - Employment status
 
-**Access Comparison:**
+**Access Request Comparison (NEW):**
+- Active access requests for User 1 vs User 2
+- Number of pending requests
+- Recently approved/rejected requests
+- Common resources being requested
+- Request patterns and frequencies
+- Justifications and reasons provided
+- Request timestamps and age
+
+**Pending Approvals Comparison (NEW):**
+- Approval queue for User 1 vs User 2 (if they are approvers)
+- Number of requests waiting for their approval
+- Workflow steps where they're approvers (Manager, ResourceOwner, SystemOwner)
+- Comparison of approval responsibilities
+- Backlog analysis
+
+**Current Access Comparison:**
 - Common resources (both have access)
 - Unique to User 1
 - Unique to User 2
 - Compliance differences
+- Violation comparisons
 
 **Assignment Policy Comparison:**
 - Policies affecting both users
 - Policies unique to each user
 - Automatic vs manual assignments
 
-**Access Request Comparison:**
-- Active requests for each user
-- Pending approvals
-- Request patterns
-
 **Step 5: Analysis Summary**
 I'll highlight:
-- Key similarities
-- Key differences
-- Potential access anomalies
-- Compliance concerns
-- Recommendations
+- Key similarities in roles and responsibilities
+- Key differences in access levels
+- Potential access anomalies or inconsistencies
+- Compliance concerns and violations
+- Access request patterns and trends
+- Approval workload differences (if applicable)
+- Recommendations for access alignment or remediation
 
 **Use Cases for Identity Comparison:**
 - Access certification and review
 - Role model creation (using an exemplar user)
 - Onboarding (matching new user to existing peer)
-- Offboarding verification
-- Access anomaly detection
-- Privilege analysis
+- Offboarding verification (ensuring access is removed)
+- Access anomaly detection (peer comparison)
+- Privilege analysis (comparing similar roles)
+- Approval workload balancing (comparing approver responsibilities)
+- Access request audit (reviewing request patterns)
 
 **Important Notes:**
 - Uses UId field (32-char GUID) for identity lookups
 - Retrieves full organizational context
 - Compares actual assignments (not just roles)
 - Includes compliance and violation data
+- NEW: Compares active access requests and their statuses
+- NEW: Compares pending approvals if users are approvers
+- Uses get_access_requests with identity filtering
+- Uses get_pending_approvals to check approval queues
 
 **Ready to compare?** Please provide:
 1. Identifying information for the first user (name, email, or employee ID)
