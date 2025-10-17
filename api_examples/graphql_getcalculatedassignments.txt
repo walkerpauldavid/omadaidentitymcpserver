@@ -1,0 +1,50 @@
+query MyQuery {
+  calculatedAssignments(
+    sorting: {sortOrder: ASCENDING, sortBy: RESOURCE_NAME}
+    filters: {identityName: {filterValue: "Adam Brown", operator: CONTAINS}}
+  ) {
+    pages
+    total
+    data {
+      complianceStatus
+      violations {
+        description
+        violationStatus
+      }
+      reason {
+        reasonType
+        description
+        causeObjectKey
+      }
+      validFrom
+      validTo
+      resource {
+        name
+        id
+        description
+        resourceFolder {
+          id
+        }
+      }
+      identity {
+        firstName
+        lastName
+        displayName
+        id
+        accounts {
+          accountName
+          id
+          system {
+            name
+            id
+          }
+          accountType {
+            name
+            id
+          }
+        }
+      }
+      disabled
+    }
+  }
+}

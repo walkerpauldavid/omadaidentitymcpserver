@@ -320,17 +320,6 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
     return summarized
 
 
-# =============================================================================
-# OAuth Token Functions
-# =============================================================================
-# NOTE: OAuth token acquisition functions have been migrated to oauth_mcp_server
-# This server now focuses on Omada-specific operations.
-# For token operations, use the oauth_mcp_server which provides:
-#   - OAuth 2.0 Client Credentials Flow
-#   - OAuth 2.0 Device Authorization Grant Flow
-#   - Token caching and management
-# =============================================================================
-
 @with_function_logging
 @mcp.tool()
 async def query_omada_entity(entity_type: str = "Identity",
@@ -1822,16 +1811,24 @@ async def get_identities_for_beneficiary(impersonate_user: str,
 
 @with_function_logging
 @mcp.tool()
-async def get_calculated_assignments_detailed(identity_id: str, impersonate_user: str,
+async def get_calculated_assignments_detailed(identity_ids: str, impersonate_user: str, bearer_token: str,
                                              resource_type_name: str = None,
+                                             resource_type_operator: str = "CONTAINS",
                                              compliance_status: str = None,
+                                             compliance_status_operator: str = "CONTAINS",
+                                             account_name: str = None,
+                                             account_name_operator: str = "CONTAINS",
+                                             system_name: str = None,
+                                             system_name_operator: str = "CONTAINS",
+                                             identity_name: str = None,
+                                             identity_name_operator: str = "CONTAINS",
+                                             sort_by: str = "RESOURCE_NAME",
                                              omada_base_url: str = None,
-                                             scope: str = None,
-                                             bearer_token: str = None) -> str:
+                                             scope: str = None) -> str:
     """
     Get detailed calculated assignments with compliance and violation status using Omada GraphQL API.
 
-    IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
+    IMPORTANT: This function requires 3 mandatory parameters. If any are missing,
     you MUST prompt the user to provide them before calling this function.
 
     CRITICAL - Identity ID Field Name:
@@ -1842,31 +1839,49 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
         When querying Identity data, you MUST:
         1. Query the Identity entity to get the user record
         2. Extract the "UId" field (NOT "Id" or "IdentityID") from the result
-        3. Use that UId value as the identity_id parameter
+        3. Use that UId value as the identity_ids parameter
 
         Example workflow:
         - Query: query_omada_identity with EMAIL filter returns {"UId": "2c68e1df-...", "Id": 1006715, "IdentityID": "ROBWOL"}
-        - Use UId: "2c68e1df-..." as identity_id parameter (32 character GUID)
+        - Use UId: "2c68e1df-..." as identity_ids parameter (32 character GUID)
         - DO NOT use Id: 1006715 (this will fail!)
         - DO NOT use IdentityID: "ROBWOL" (this will fail!)
 
     REQUIRED PARAMETERS (prompt user if missing):
-        identity_id: The identity UId (32-character GUID from the "UId" field, NOT the "Id" or "IdentityID" fields!)
-                    Example: "2c68e1df-1335-4e8c-8ef9-eff1d2005629" (CORRECT - from UId field)
-                    NOT: 1006715 (WRONG - this is the Id field)
-                    NOT: "ROBWOL" (WRONG - this is the IdentityID field)
-                    PROMPT: "Please provide the identity UId (32-character GUID from the UId field)"
+        identity_ids: One or more identity UIds (32-character GUIDs from the "UId" field, NOT the "Id" or "IdentityID" fields!)
+                     Can be a single UId or multiple UIds separated by commas
+                     Example: "2c68e1df-1335-4e8c-8ef9-eff1d2005629" (CORRECT - single UId from UId field)
+                     Example: "2c68e1df-1335-4e8c-8ef9-eff1d2005629,a3b7f2e8-2446-5f9d-9fa0-f0e2d3116730" (CORRECT - multiple UIds)
+                     NOT: 1006715 (WRONG - this is the Id field)
+                     NOT: "ROBWOL" (WRONG - this is the IdentityID field)
+                     PROMPT: "Please provide one or more identity UIds (32-character GUIDs from the UId field, comma-separated)"
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
+        bearer_token: OAuth2 bearer token for authentication (required for API access)
+                     PROMPT: "Please provide a valid bearer token"
 
     Optional parameters:
         resource_type_name: Filter by resource type name (e.g., "Active Directory - Security Group")
-                           Uses CONTAINS operator if provided
+        resource_type_operator: Operator for resource_type_name filter (default: "CONTAINS")
+                               Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
         compliance_status: Filter by compliance status (e.g., "NOT APPROVED", "APPROVED")
-                          Uses CONTAINS operator if provided
+        compliance_status_operator: Operator for compliance_status filter (default: "CONTAINS")
+                                   Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        account_name: Filter by account name (e.g., "HANULR")
+        account_name_operator: Operator for account_name filter (default: "CONTAINS")
+                              Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        system_name: Filter by system name (e.g., "AD")
+        system_name_operator: Operator for system_name filter (default: "CONTAINS")
+                             Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        identity_name: Filter by identity name (e.g., "ROBERT WOLF")
+        identity_name_operator: Operator for identity_name filter (default: "CONTAINS")
+                               Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        sort_by: Field to sort results by (default: "RESOURCE_NAME")
+                Valid values: "RESOURCE_NAME", "IDENTITY_NAME", "ACCOUNT_NAME", "RESOURCE_TYPE",
+                             "COMPLIANCE_STATUS", "SYSTEM_NAME", "VALID_FROM", "VALID_TO",
+                             "DISABLED", "VIOLATION_STATUS"
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
-        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with detailed assignments including compliance status, violations, accounts, and resources
@@ -1883,85 +1898,137 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
 
     try:
         # Validate mandatory fields using helper
-        error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
+        error = validate_required_fields(identity_ids=identity_ids, impersonate_user=impersonate_user, bearer_token=bearer_token)
         if error:
             return error
 
         # Build the filters object dynamically based on provided parameters
         filters = []
 
-        # identityIds is always required
-        filters.append(f'identityIds: "{identity_id}"')
+        # Add multipleIdentityIds filter (most efficient filter using GUID)
+        filters.append(f'multipleIdentityIds: "{identity_ids}"')
 
         # Add optional filters only if provided
         if resource_type_name and resource_type_name.strip():
-            filters.append(f'resourceTypeName: {{filterValue: "{resource_type_name}", operator: CONTAINS}}')
+            # Validate operator
+            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
+            if resource_type_operator not in valid_operators:
+                return build_error_response(
+                    error_type="InvalidOperator",
+                    message=f"Invalid resource_type_operator: {resource_type_operator}. Valid values are: {', '.join(valid_operators)}",
+                    impersonated_user=impersonate_user
+                )
+            filters.append(f'resourceTypeName: {{filterValue: "{resource_type_name}", operator: {resource_type_operator}}}')
 
         if compliance_status and compliance_status.strip():
-            filters.append(f'complianceStatus: {{filterValue: "{compliance_status}", operator: CONTAINS}}')
+            # Validate operator
+            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
+            if compliance_status_operator not in valid_operators:
+                return build_error_response(
+                    error_type="InvalidOperator",
+                    message=f"Invalid compliance_status_operator: {compliance_status_operator}. Valid values are: {', '.join(valid_operators)}",
+                    impersonated_user=impersonate_user
+                )
+            filters.append(f'complianceStatus: {{filterValue: "{compliance_status}", operator: {compliance_status_operator}}}')
+
+        if account_name and account_name.strip():
+            # Validate operator
+            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
+            if account_name_operator not in valid_operators:
+                return build_error_response(
+                    error_type="InvalidOperator",
+                    message=f"Invalid account_name_operator: {account_name_operator}. Valid values are: {', '.join(valid_operators)}",
+                    impersonated_user=impersonate_user
+                )
+            filters.append(f'accountName: {{filterValue: "{account_name}", operator: {account_name_operator}}}')
+
+        if system_name and system_name.strip():
+            # Validate operator
+            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
+            if system_name_operator not in valid_operators:
+                return build_error_response(
+                    error_type="InvalidOperator",
+                    message=f"Invalid system_name_operator: {system_name_operator}. Valid values are: {', '.join(valid_operators)}",
+                    impersonated_user=impersonate_user
+                )
+            filters.append(f'systemName: {{filterValue: "{system_name}", operator: {system_name_operator}}}')
+
+        if identity_name and identity_name.strip():
+            # Validate operator
+            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
+            if identity_name_operator not in valid_operators:
+                return build_error_response(
+                    error_type="InvalidOperator",
+                    message=f"Invalid identity_name_operator: {identity_name_operator}. Valid values are: {', '.join(valid_operators)}",
+                    impersonated_user=impersonate_user
+                )
+            filters.append(f'identityName: {{filterValue: "{identity_name}", operator: {identity_name_operator}}}')
 
         # Join filters
         filters_string = ', '.join(filters)
 
+        # Validate sort_by parameter
+        valid_sort_options = [
+            "RESOURCE_NAME", "IDENTITY_NAME", "ACCOUNT_NAME", "RESOURCE_TYPE",
+            "COMPLIANCE_STATUS", "SYSTEM_NAME", "VALID_FROM", "VALID_TO",
+            "DISABLED", "VIOLATION_STATUS"
+        ]
+        if sort_by not in valid_sort_options:
+            return build_error_response(
+                error_type="InvalidSortOption",
+                message=f"Invalid sort_by: {sort_by}. Valid values are: {', '.join(valid_sort_options)}",
+                impersonated_user=impersonate_user
+            )
+
         # Build GraphQL query with the filters
         query = f"""query GetCalculatedAssignmentsDetailed {{
   calculatedAssignments(
+    sorting: {{sortOrder: ASCENDING, sortBy: {sort_by}}}
     filters: {{{filters_string}}}
   ) {{
     pages
     total
     data {{
-      id
       complianceStatus
-      disabled
-      validFrom
-      validTo
       violations {{
         description
         violationStatus
       }}
-      account {{
-        accountName
-        accountType {{
-          name
-          id
-        }}
-        system {{
-          name
-          id
-        }}
+      reason {{
+        reasonType
+        description
+        causeObjectKey
       }}
-      identity {{
-        identityId
-        lastName
-        firstName
-        id
-        accounts {{
-          accountName
-          system {{
-            name
-            id
-          }}
-        }}
-      }}
+      validFrom
+      validTo
       resource {{
         name
         id
         description
-        system {{
+        resourceFolder {{
           id
-          name
-        }}
-        resourceType {{
-          id
-          name
         }}
       }}
-      reason {{
-        description
-        reasonType
-        causeObjectKey
+      identity {{
+        firstName
+        lastName
+        displayName
+        id
+        identityId
       }}
+      disabled
+      account {{
+          accountName
+          id
+          system {{
+            name
+            id
+          }}
+          accountType {{
+            name
+            id
+          }}
+        }}
     }}
   }}
 }}"""
@@ -1990,7 +2057,7 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
                 return build_success_response(
                     data=assignments_data,
                     endpoint=result["endpoint"],
-                    identity_id=identity_id,
+                    identity_ids=identity_ids,
                     impersonated_user=impersonate_user,
                     resource_type_name=resource_type_name,
                     compliance_status=compliance_status,
@@ -2003,7 +2070,7 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
                 return build_error_response(
                     error_type="NoAssignmentsFound",
                     message="No calculated assignments found in response",
-                    identity_id=identity_id,
+                    identity_ids=identity_ids,
                     impersonated_user=impersonate_user,
                     response=data
                 )
@@ -2012,7 +2079,7 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
             return build_error_response(
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
-                identity_id=identity_id,
+                identity_ids=identity_ids,
                 impersonated_user=impersonate_user
             )
 
@@ -2020,7 +2087,7 @@ async def get_calculated_assignments_detailed(identity_id: str, impersonate_user
         return build_error_response(
             error_type=type(e).__name__,
             message=str(e),
-            identity_id=identity_id,
+            identity_ids=identity_ids,
             impersonated_user=impersonate_user
         )
     finally:
