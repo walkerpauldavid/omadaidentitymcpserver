@@ -1823,6 +1823,8 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                                              identity_name: str = None,
                                              identity_name_operator: str = "CONTAINS",
                                              sort_by: str = "RESOURCE_NAME",
+                                             page: int = 1,
+                                             rows: int = 50,
                                              omada_base_url: str = None,
                                              scope: str = None) -> str:
     """
@@ -1880,11 +1882,21 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                 Valid values: "RESOURCE_NAME", "IDENTITY_NAME", "ACCOUNT_NAME", "RESOURCE_TYPE",
                              "COMPLIANCE_STATUS", "SYSTEM_NAME", "VALID_FROM", "VALID_TO",
                              "DISABLED", "VIOLATION_STATUS"
+        page: Page number to retrieve (default: 1, minimum: 1)
+             Use with rows parameter to paginate through large result sets
+        rows: Number of rows per page (default: 50, minimum: 1, maximum: 1000)
+             Controls page size for pagination
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
         scope: OAuth2 scope for the token
 
     Returns:
-        JSON response with detailed assignments including compliance status, violations, accounts, and resources
+        JSON response with detailed assignments including:
+        - total: Total number of assignments matching filters
+        - pages: Total number of pages available
+        - current_page: The page number returned
+        - rows_per_page: Number of rows per page
+        - assignments_returned: Number of assignments in current page
+        - data: Array of assignment objects for current page
     """
     # WORKAROUND: Manually set logger level since decorator isn't working for this function
     old_level = logger.level
@@ -1901,6 +1913,21 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
         error = validate_required_fields(identity_ids=identity_ids, impersonate_user=impersonate_user, bearer_token=bearer_token)
         if error:
             return error
+
+        # Validate pagination parameters
+        if page < 1:
+            return build_error_response(
+                error_type="InvalidPaginationParameter",
+                message=f"Invalid page number: {page}. Page must be >= 1.",
+                impersonated_user=impersonate_user
+            )
+
+        if rows < 1 or rows > 1000:
+            return build_error_response(
+                error_type="InvalidPaginationParameter",
+                message=f"Invalid rows per page: {rows}. Rows must be between 1 and 1000.",
+                impersonated_user=impersonate_user
+            )
 
         # Build the filters object dynamically based on provided parameters
         filters = []
@@ -1980,10 +2007,11 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                 impersonated_user=impersonate_user
             )
 
-        # Build GraphQL query with the filters
+        # Build GraphQL query with the filters and pagination
         query = f"""query GetCalculatedAssignmentsDetailed {{
   calculatedAssignments(
     sorting: {{sortOrder: ASCENDING, sortBy: {sort_by}}}
+    pagination: {{page: {page}, rows: {rows}}}
     filters: {{{filters_string}}}
   ) {{
     pages
@@ -2063,6 +2091,8 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                     compliance_status=compliance_status,
                     total_assignments=total,
                     pages=pages,
+                    current_page=page,
+                    rows_per_page=rows,
                     assignments_returned=len(assignments_data),
                     assignments=assignments_data
                 )

@@ -4,18 +4,17 @@ A Model Context Protocol (MCP) server that provides integration with Omada Ident
 
 ## Features
 
-- **Azure AD OAuth2 Authentication** - Secure authentication using client credentials flow
+- **Bearer Token Authentication** - Uses bearer tokens for API authentication (OAuth handled by oauth_mcp_server)
 - **OData API Integration** - Query identities, resources, roles, and assignments
 - **GraphQL API Support** - Access requests, contexts, and detailed calculated assignments
 - **Comprehensive Logging** - File and console logging with per-function log level control
 - **Error Handling** - Custom exceptions with detailed error responses
-- **Token Caching** - Automatic OAuth2 token caching and refresh
 
 ## Prerequisites
 
 - Python 3.8 or higher
 - Omada Identity Cloud instance
-- Azure AD application registration with client credentials
+- Bearer token for authentication (obtain from oauth_mcp_server)
 - Required Python packages (see Installation)
 
 ## Installation
@@ -37,7 +36,9 @@ pip install -r requirements.txt
 
 ### Setting up the .env File
 
-The `.env` file contains sensitive credentials and is **not included in the repository** for security reasons. You must create this file manually.
+The `.env` file contains configuration settings and is **not included in the repository** for security reasons. You must create this file manually.
+
+**Note:** OAuth2 authentication has been moved to a separate `oauth_mcp_server` project. This server uses bearer tokens provided by the OAuth server.
 
 **Step-by-step setup:**
 
@@ -50,8 +51,7 @@ The `.env` file contains sensitive credentials and is **not included in the repo
 
 2. **Copy the template below** into your `.env` file
 
-3. **Replace placeholder values** with your actual credentials:
-   - Get Azure AD values from your Azure portal app registration
+3. **Replace placeholder values** with your actual configuration:
    - Get Omada URL from your Omada instance
    - Configure logging preferences as needed
 
@@ -63,13 +63,6 @@ Copy this complete template into your `.env` file and update the values:
 # =============================================================================
 # REQUIRED CONFIGURATION - You must set these values
 # =============================================================================
-
-# Azure AD OAuth2 Configuration
-# Get these from your Azure Portal > App Registrations > Your App
-TENANT_ID=your-tenant-id-here                    # Azure AD Tenant ID (GUID)
-CLIENT_ID=your-client-id-here                    # Application (client) ID
-CLIENT_SECRET=your-client-secret-here            # Client secret value
-OAUTH2_SCOPE=api://your-client-id-here/.default  # OAuth2 scope (use your CLIENT_ID)
 
 # Omada Identity Configuration
 OMADA_BASE_URL=https://your-instance.omada.cloud # Your Omada instance URL (no trailing slash)
@@ -127,17 +120,6 @@ RESOURCE_TYPE_APPLICATION_ROLES=1011066
 # RESOURCE_TYPE_AD_GROUPS=1011069
 ```
 
-### How to Get Your Azure AD Values
-
-1. **Log into Azure Portal**: https://portal.azure.com
-2. **Navigate to**: Azure Active Directory > App registrations
-3. **Select your app** (or create a new one)
-4. **Get values**:
-   - **TENANT_ID**: Overview page > Directory (tenant) ID
-   - **CLIENT_ID**: Overview page > Application (client) ID
-   - **CLIENT_SECRET**: Certificates & secrets > Client secrets > Create new secret
-   - **OAUTH2_SCOPE**: Use format `api://{CLIENT_ID}/.default`
-
 ### How to Get Your Omada URL
 
 Your Omada base URL is the URL you use to access your Omada instance:
@@ -150,20 +132,17 @@ Your Omada base URL is the URL you use to access your Omada instance:
 After creating your `.env` file, you can test the configuration:
 
 ```bash
-# Test Azure authentication
-python -c "from server import get_azure_token; import asyncio; print(asyncio.run(get_azure_token()))"
-
-# Or use the ping function to verify the server starts
+# Use the ping function to verify the server starts
 python server.py
 ```
 
+### Authentication
+
+This server requires bearer tokens for API authentication. OAuth2 token generation has been moved to the separate `oauth_mcp_server` project. Use that server to obtain bearer tokens, then provide them when calling functions in this server.
+
 ## Available Functions
 
-### Authentication Functions
-
-- **`get_azure_token`** - Get OAuth2 bearer token for API authentication
-- **`get_azure_token_info`** - Get detailed token information including expiry
-- **`test_azure_token`** - Test token validity by making an API call
+**Note:** OAuth2 authentication functions (`get_azure_token`, `get_azure_token_info`, `test_azure_token`) have been moved to the `oauth_mcp_server` project.
 
 ### Identity Query Functions
 
@@ -326,9 +305,9 @@ All functions return JSON responses with status indicators:
 
 ## Security Notes
 
-- Never commit `.env` file - contains sensitive credentials
+- Never commit `.env` file - contains configuration settings
 - Log files (`.log`) are excluded from git
-- OAuth2 tokens are cached in memory only
+- Bearer tokens should be obtained from `oauth_mcp_server`
 - All API calls use HTTPS
 
 ## Contributing
