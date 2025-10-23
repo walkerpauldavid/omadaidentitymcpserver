@@ -106,8 +106,17 @@ def with_function_logging(func):
     if asyncio.iscoroutinefunction(func):
         async def async_wrapper(*args, **kwargs):
             old_level, old_handler_levels = set_function_logger_level(func.__name__)
+            # Log function entrance at INFO level
+            logger.info(f"ENTERING function: {func.__name__}")
             try:
-                return await func(*args, **kwargs)
+                result = await func(*args, **kwargs)
+                # Log function exit at INFO level
+                logger.info(f"EXITING function: {func.__name__}")
+                return result
+            except Exception as e:
+                # Log function exit with error at INFO level
+                logger.info(f"EXITING function: {func.__name__} with error: {type(e).__name__}")
+                raise
             finally:
                 # Restore logger level
                 logger.setLevel(old_level)
@@ -126,8 +135,17 @@ def with_function_logging(func):
     else:
         def sync_wrapper(*args, **kwargs):
             old_level, old_handler_levels = set_function_logger_level(func.__name__)
+            # Log function entrance at INFO level
+            logger.info(f"ENTERING function: {func.__name__}")
             try:
-                return func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                # Log function exit at INFO level
+                logger.info(f"EXITING function: {func.__name__}")
+                return result
+            except Exception as e:
+                # Log function exit with error at INFO level
+                logger.info(f"EXITING function: {func.__name__} with error: {type(e).__name__}")
+                raise
             finally:
                 # Restore logger level
                 logger.setLevel(old_level)
@@ -1113,8 +1131,8 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
 
 @with_function_logging
 @mcp.tool()
-async def get_access_requests(impersonate_user: str, filter_field: str = None, filter_value: str = None,
-                              summary_mode: bool = True, bearer_token: str = None) -> str:
+async def get_access_requests(impersonate_user: str, bearer_token: str, filter_field: str = None, filter_value: str = None,
+                              summary_mode: bool = True) -> str:
     """Get access requests from Omada GraphQL API using user impersonation.
 
     Args:
@@ -1231,9 +1249,8 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
 
 @with_function_logging
 @mcp.tool()
-async def create_access_request(impersonate_user: str, reason: str, context: str,
-                              resources: str, valid_from: str = None, valid_to: str = None,
-                              bearer_token: str = None) -> str:
+async def create_access_request(impersonate_user: str, bearer_token: str, reason: str, context: str,
+                              resources: str, valid_from: str = None, valid_to: str = None) -> str:
     """Create an access request using GraphQL mutation.
 
     IMPORTANT: This function requires 4 mandatory parameters. If any are missing,
@@ -1465,10 +1482,9 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
 
 @with_function_logging
 @mcp.tool()
-async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
+async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str, bearer_token: str,
                                        system_id: str = None, context_id: str = None,
-                                       resource_name: str = None,
-                                       bearer_token: str = None) -> str:
+                                       resource_name: str = None) -> str:
     """
     Get resources available for an ACCESS REQUEST for a specific user/identity using Omada GraphQL API.
 
@@ -1496,7 +1512,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         - Use UId: "e3e869c4-..." as identity_id parameter (32 character UUID)
         - DO NOT use Id: 1006715 (this will fail!)
 
-    IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
+    IMPORTANT: This function requires 3 mandatory parameters. If any are missing,
     you MUST prompt the user to provide them before calling this function.
 
     REQUIRED PARAMETERS (prompt user if missing):
@@ -1506,13 +1522,14 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                     PROMPT: "Please provide the identity UId (32-character UUID from the UId field, not the Id field)"
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
 
     Optional parameters:
         system_id: System ID to filter resources by (e.g., "1c2768e9-86fd-43fd-9e0d-5c8fee21b59b")
         context_id: Context ID to filter resources by (e.g., "6dd03400-ddb5-4cc4-bfff-490d94b195a9")
         resource_name: Resource name to filter by (string, partial match supported)
                       Example: "Sales" will match "Sales Team Access", "Sales Reports", etc.
-        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with resources data or error message
@@ -1622,10 +1639,9 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
 
 @with_function_logging
 @mcp.tool()
-async def get_requestable_resources(identity_id: str, impersonate_user: str,
+async def get_requestable_resources(identity_id: str, impersonate_user: str, bearer_token: str,
                                    system_id: str = None, context_id: str = None,
-                                   resource_name: str = None,
-                                   bearer_token: str = None) -> str:
+                                   resource_name: str = None) -> str:
     """
     Get resources that a user can request access to (alias for get_resources_for_beneficiary).
 
@@ -1675,9 +1691,8 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str,
 
 @with_function_logging
 @mcp.tool()
-async def get_identities_for_beneficiary(impersonate_user: str,
-                                         page: int = None, rows: int = None,
-                                         bearer_token: str = None) -> str:
+async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: str,
+                                         page: int = None, rows: int = None) -> str:
     """
     Get a list of identities available for access requests using Omada GraphQL API.
 
@@ -1690,16 +1705,17 @@ async def get_identities_for_beneficiary(impersonate_user: str,
     This function queries the accessRequestComponents.identities endpoint to get identities
     that can be used as beneficiaries in access requests.
 
-    IMPORTANT: This function requires 1 mandatory parameter.
+    IMPORTANT: This function requires 2 mandatory parameters.
 
     REQUIRED PARAMETERS (prompt user if missing):
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
 
     Optional parameters:
         page: Page number for pagination (e.g., 1, 2, 3...)
         rows: Number of rows per page (e.g., 10, 20, 50...)
-        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with identities data including pagination metadata or error message
@@ -2131,12 +2147,11 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
 
 @with_function_logging
 @mcp.tool()
-async def get_identity_contexts(identity_id: str, impersonate_user: str,
-                               bearer_token: str = None) -> str:
+async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_token: str) -> str:
     """
     Get contexts for a specific identity using Omada GraphQL API.
 
-    IMPORTANT: This function requires 2 mandatory parameters. If any are missing,
+    IMPORTANT: This function requires 3 mandatory parameters. If any are missing,
     you MUST prompt the user to provide them before calling this function.
 
     REQUIRED PARAMETERS (prompt user if missing):
@@ -2144,9 +2159,8 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
                     PROMPT: "Please provide the identity ID"
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
-
-    Optional parameters:
-        bearer_token: Optional bearer token to use instead of acquiring a new one
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
 
     Returns:
         JSON response with contexts data including:
@@ -2241,25 +2255,26 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
 
 @with_function_logging
 @mcp.tool()
-async def get_pending_approvals(impersonate_user: str, workflow_step: str = None,
-                                summary_mode: bool = True,
-                                bearer_token: str = None) -> str:
+async def get_pending_approvals(impersonate_user: str, bearer_token: str,
+                                workflow_step: str = None,
+                                summary_mode: bool = True) -> str:
     """
     Get pending approval survey questions from Omada GraphQL API.
 
-    IMPORTANT: This function requires 1 mandatory parameter. If missing,
-    you MUST prompt the user to provide it before calling this function.
+    IMPORTANT: This function requires 2 mandatory parameters. If missing,
+    you MUST prompt the user to provide them before calling this function.
 
     REQUIRED PARAMETERS (prompt user if missing):
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
 
     Optional parameters:
         workflow_step: Filter by workflow step (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
                       If not provided, returns all pending approvals
         summary_mode: If True (default), returns only key fields (workflowStep, workflowStepTitle, reason)
                      If False, returns all fields including surveyId and surveyObjectKey
-        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     ⚠️ IMPORTANT FOR CLAUDE - DISPLAY TO USER:
     When presenting pending approvals to the user, you MUST ALWAYS include:
@@ -2390,22 +2405,22 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
 
 @with_function_logging
 @mcp.tool()
-async def get_approval_details(impersonate_user: str, workflow_step: str = None,
-                               bearer_token: str = None) -> str:
+async def get_approval_details(impersonate_user: str, bearer_token: str,
+                               workflow_step: str = None) -> str:
     """
     Get FULL approval details including technical IDs (surveyId, surveyObjectKey) needed for making decisions.
 
     Use this function when you need to make an approval decision and need the technical IDs.
     This returns all fields including surveyId and surveyObjectKey which are required for make_approval_decision.
 
-    IMPORTANT: This function requires 1 mandatory parameter.
+    IMPORTANT: This function requires 2 mandatory parameters.
 
     REQUIRED PARAMETERS:
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+        bearer_token: Bearer token for authentication (required for GraphQL API)
 
     Optional parameters:
         workflow_step: Filter by workflow step (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
-        bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
         JSON response with FULL approval details including surveyId and surveyObjectKey
@@ -2413,17 +2428,16 @@ async def get_approval_details(impersonate_user: str, workflow_step: str = None,
     # Call get_pending_approvals with summary_mode=False to get all fields
     return await get_pending_approvals(
         impersonate_user=impersonate_user,
+        bearer_token=bearer_token,
         workflow_step=workflow_step,
-        summary_mode=False,  # Get full details including technical IDs
-        bearer_token=bearer_token
+        summary_mode=False  # Get full details including technical IDs
     )
 
 
 @with_function_logging
 @mcp.tool()
 async def make_approval_decision(impersonate_user: str, survey_id: str,
-                                 survey_object_key: str, decision: str,
-                                 bearer_token: str = None) -> str:
+                                 survey_object_key: str, decision: str, bearer_token: str) -> str:
     """
     Make an approval decision (APPROVE or REJECT) for an access request using Omada GraphQL API.
 
@@ -2451,9 +2465,8 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
                           PROMPT: "Please provide the survey object key"
         decision: The approval decision - must be either "APPROVE" or "REJECT"
                  PROMPT: "Please provide the decision (APPROVE or REJECT)"
-
-    Optional parameters:
-        bearer_token: Optional bearer token to use instead of acquiring a new one
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
 
     Returns:
         JSON response with approval submission result or error message
@@ -2564,8 +2577,7 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
 
 @with_function_logging
 @mcp.tool()
-async def get_compliance_workbench_survey_and_compliance_status(impersonate_user: str,
-                                                                bearer_token: str = None) -> str:
+async def get_compliance_workbench_survey_and_compliance_status(impersonate_user: str, bearer_token: str) -> str:
     """
     Get compliance workbench configuration including compliance status values and survey templates from Omada GraphQL API.
 
@@ -2573,15 +2585,14 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
     - Compliance status values (name and value pairs)
     - Survey templates (with ID, name, type, system name, and survey initiation activity ID)
 
-    IMPORTANT: This function requires 1 mandatory parameter. If missing,
-    you MUST prompt the user to provide it before calling this function.
+    IMPORTANT: This function requires 2 mandatory parameters. If missing,
+    you MUST prompt the user to provide them before calling this function.
 
     REQUIRED PARAMETERS (prompt user if missing):
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
-
-    Optional parameters:
-        bearer_token: Optional bearer token to use instead of acquiring a new one
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
 
     Returns:
         JSON response with compliance workbench configuration including:
