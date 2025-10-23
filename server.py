@@ -470,9 +470,9 @@ async def query_omada_entity(entity_type: str = "Identity",
         if entity_type not in valid_entities:
             return f"❌ Invalid entity type '{entity_type}'. Valid types: {', '.join(valid_entities)}"
 
-        # Get base URL using helper function
+        # Get base URL using helper function (reads from environment)
         try:
-            omada_base_url = _get_omada_base_url(omada_base_url)
+            omada_base_url = _get_omada_base_url()
         except Exception as e:
             return f"❌ {str(e)}"
 
@@ -1047,8 +1047,8 @@ async def _prepare_graphql_request(impersonate_user: str, graphql_version: str =
     # Strip "Bearer " prefix if already present to avoid double-prefix
     token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
 
-    # Get base URL using helper function
-    omada_base_url = _get_omada_base_url(omada_base_url)
+    # Get base URL using helper function (no parameter needed, will read from env)
+    omada_base_url = _get_omada_base_url()
 
     # Get GraphQL endpoint version from parameter, environment, or default to 3.0
     if not graphql_version:
