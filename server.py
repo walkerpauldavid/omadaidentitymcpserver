@@ -221,7 +221,7 @@ def _summarize_entities(data: dict, entity_type: str) -> dict:
 
     # Define key fields for each entity type
     summary_fields = {
-        "Identity": ["Id", "DISPLAYNAME", "FIRSTNAME", "LASTNAME", "EMAIL", "EMPLOYEEID", "DEPARTMENT", "STATUS"],
+        "Identity": ["Id", "UId", "DISPLAYNAME", "FIRSTNAME", "LASTNAME", "EMAIL", "EMPLOYEEID", "DEPARTMENT", "STATUS"],
         "Resource": ["Id", "DISPLAYNAME", "DESCRIPTION", "RESOURCEKEY", "STATUS", "Systemref"],
         "Role": ["Id", "DISPLAYNAME", "DESCRIPTION", "STATUS"],
         "Account": ["Id", "ACCOUNTNAME", "DISPLAYNAME", "STATUS", "SYSTEM"],
@@ -669,6 +669,26 @@ async def query_omada_identity(field_filters: list = None,
     """
     Query Omada Identity entities (wrapper for query_omada_entity).
 
+    IMPORTANT LLM INSTRUCTIONS - UId Field Handling:
+        When summary_mode=True (default), the response includes the UId field:
+        1. DO NOT display the "UId" field to the user in your responses
+        2. ONLY show user-friendly fields: DISPLAYNAME, FIRSTNAME, LASTNAME, EMAIL, EMPLOYEEID, DEPARTMENT, STATUS
+        3. INTERNALLY store/remember the "UId" value for each identity
+        4. When the user selects an identity by name/email, USE the corresponding "UId" value
+           for any subsequent API calls that require an identity_id or identity_ids parameter
+        5. The "UId" is a 32-character GUID (e.g., "2c68e1df-1335-4e8c-8ef9-eff1d2005629") required
+           by GraphQL functions but not useful for end users to see
+
+        Example user presentation:
+        "Found identity: Robert Wolf (ROBWOL@domain.com)
+        Department: Finance, Employee ID: EMP12345"
+
+        But internally remember:
+        - Robert Wolf: UId="2c68e1df-1335-4e8c-8ef9-eff1d2005629"
+
+        When user says "Get assignments for Robert Wolf", use UId="2c68e1df-1335-4e8c-8ef9-eff1d2005629"
+        in the identity_ids parameter.
+
     IMPORTANT - Identity Field Names (use EXACTLY as shown):
         - EMAIL (not "email", "MAIL", or "EMAILADDRESS")
         - FIRSTNAME (not "firstname" or "first_name")
@@ -690,9 +710,13 @@ async def query_omada_identity(field_filters: list = None,
         order_by: Field(s) to order by
         include_count: Include total count in response
         bearer_token: Optional bearer token to use instead of acquiring a new one
+        summary_mode: If True (default), returns only key fields including UId (use UId internally, don't display to user)
 
     Returns:
-        JSON response with identity data or error message
+        JSON response with identity data including:
+        - UId: 32-character GUID (for internal use in subsequent API calls - don't display to user)
+        - DISPLAYNAME, FIRSTNAME, LASTNAME, EMAIL: User-friendly display fields
+        - EMPLOYEEID, DEPARTMENT, STATUS: Additional identity attributes
     """
     # Build filters dictionary for clean API
     filters = {}
@@ -1830,6 +1854,36 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
     """
     Get detailed calculated assignments with compliance and violation status using Omada GraphQL API.
 
+    IMPORTANT LLM INSTRUCTIONS - When to Use This Tool:
+        USE THIS TOOL (GraphQL) when the user asks for assignments with ANY of these patterns:
+
+        System Name Queries:
+        - "Get me all the assignments in system {X}" (e.g., "in system AD", "in Active Directory")
+        - "Show assignments for {person} in system {X}"
+        - "What assignments does {person} have in {system}?"
+        - "List all {system} assignments for {person}"
+        - "Get assignments filtered by system name"
+        - Any query that filters by system_name parameter
+
+        Account Name Queries:
+        - "Show me assignments for account {NAME}" (e.g., "for account HANULR", "for account JohnDoe")
+        - "Get assignments using account {NAME}"
+        - "What assignments use account {NAME}?"
+        - "List assignments for account name {NAME}"
+        - "Show me what {account} has access to"
+        - Any query that filters by account_name parameter
+
+        DO NOT use OData query_calculated_assignments or query_omada_entity for these requests.
+        This GraphQL tool has system_name and account_name filters that are more efficient and provide richer data.
+
+        Example user requests that MUST use this tool:
+        - "Get all assignments in system AD for Robert Wolf"
+        - "Show me assignments in Active Directory system"
+        - "What does John have in the SAP system?"
+        - "Show me assignments for account HANULR"
+        - "Get assignments using account JohnDoe"
+        - "What does account ROBWOL have access to?"
+
     IMPORTANT: This function requires 3 mandatory parameters. If any are missing,
     you MUST prompt the user to provide them before calling this function.
 
@@ -2150,7 +2204,29 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
-        JSON response with contexts data or error message
+        JSON response with contexts data including:
+        - id: Internal GUID for the context (use this for subsequent GraphQL calls)
+        - displayName: Human-readable name of the context
+        - type: Context type
+
+    IMPORTANT LLM INSTRUCTIONS - Context ID Handling:
+        When presenting results to the user:
+        1. DO NOT display the "id" field in your response to the user
+        2. ONLY show "displayName" and "type" fields to the user
+        3. INTERNALLY store/remember the "id" value for each context
+        4. When the user selects a context by its displayName, USE the corresponding "id" value
+           for any subsequent API calls that require a context_id parameter
+        5. The "id" field is a technical GUID required by other GraphQL operations but not
+           useful for end users to see
+
+        Example user presentation:
+        "Available contexts:
+        - Personal (type: PERSONAL)
+        - Finance Department (type: ORGANIZATIONAL)"
+
+        But internally remember:
+        - Personal: id="a1b2c3d4-..."
+        - Finance Department: id="e5f6g7h8-..."
     """
     # Validate mandatory fields
     error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
