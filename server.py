@@ -9,14 +9,13 @@ from datetime import datetime, timedelta
 import json
 import urllib.parse
 import logging
+import hashlib
+import base64
 
-# Import helper functions for code simplification
-from helpers import validate_required_fields, build_error_response, build_success_response, build_pagination_clause
-
-# Load environment variables
+# Load environment variables FIRST
 load_dotenv()
 
-# Configure logging system
+# Configure logging system BEFORE importing any other modules
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 LOG_FILE = os.getenv("LOG_FILE", "omada_mcp_server.log")
 
@@ -41,7 +40,22 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Configure cache logger - it will use root logger's handlers via propagation
+cache_logger = logging.getLogger('cache')
+cache_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+# Don't add handlers, let it propagate to root logger
+cache_logger.propagate = True
+
 logger.info(f"Logging initialized. Writing logs to: {os.path.abspath(LOG_FILE)}")
+logger.info(f"Cache logger will use root logger handlers (level: {LOG_LEVEL})")
+
+# NOW import modules that create loggers - logging is already configured
+from helpers import validate_required_fields, build_error_response, build_success_response, build_pagination_clause
+from cache import OmadaCache
+from cache_config import get_ttl_for_operation, should_cache, DEFAULT_TTL
+
+logger.info("All modules imported successfully")
 
 def get_function_log_level(function_name: str) -> int:
     """
@@ -180,6 +194,18 @@ class ODataQueryError(OmadaServerError):
 
 mcp = FastMCP("OmadaIdentityMCP")
 
+# Initialize caching system
+CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", str(DEFAULT_TTL)))
+CACHE_AUTO_CLEANUP = os.getenv("CACHE_AUTO_CLEANUP", "true").lower() == "true"
+
+if CACHE_ENABLED:
+    cache = OmadaCache(default_ttl=CACHE_TTL_SECONDS, auto_cleanup=CACHE_AUTO_CLEANUP)
+    logger.info(f"✅ Cache system ENABLED (TTL: {CACHE_TTL_SECONDS}s, Auto-cleanup: {CACHE_AUTO_CLEANUP})")
+else:
+    cache = None
+    logger.info("⚠️ Cache system DISABLED")
+
 # Register MCP Prompts for workflow guidance
 from prompts import register_prompts
 register_prompts(mcp)
@@ -312,7 +338,7 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
     # Define key fields for each GraphQL data type
     # Fields listed here are ONLY fields that will be returned
     summary_fields = {
-        "PendingApproval": ["workflowStep", "workflowStepTitle", "reason"],
+        "PendingApproval": ["workflowStep", "workflowStepTitle", "reason", "resourceAssignment"],
         "AccessRequest": ["id", "beneficiary", "resource", "status"],
         "CalculatedAssignment": ["complianceStatus", "account", "resource", "identity"],
         "Context": ["id", "displayName", "type"],
@@ -1013,6 +1039,305 @@ async def check_omada_config() -> str:
             message=str(e)
         )
 
+@with_function_logging
+@mcp.tool()
+async def get_cache_stats() -> str:
+    """
+    Get cache statistics and performance metrics.
+
+    Shows:
+    - Number of cached entries (total, valid, expired)
+    - Cache hit counts
+    - Most frequently accessed endpoints
+    - Cache configuration (enabled/disabled, TTL)
+
+    Returns:
+        JSON string with cache statistics
+    """
+    try:
+        if not CACHE_ENABLED or cache is None:
+            return json.dumps({
+                "cache_enabled": False,
+                "message": "Cache is disabled. Set CACHE_ENABLED=true in .env to enable caching."
+            }, indent=2)
+
+        # Get stats from cache
+        stats = cache.get_stats()
+
+        # Clean up expired entries
+        expired_count = cache.cleanup_expired()
+
+        result = {
+            "cache_enabled": True,
+            "cache_statistics": stats,
+            "expired_entries_cleaned": expired_count,
+            "configuration": {
+                "default_ttl_seconds": CACHE_TTL_SECONDS,
+                "cache_file": stats.get("cache_file", "omada_cache.db")
+            }
+        }
+
+        logger.info(f"📊 Cache stats requested - Valid entries: {stats['api_cache']['valid_entries']}, Hits: {stats['api_cache']['total_hits']}")
+
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=f"Error getting cache stats: {str(e)}"
+        )
+
+@with_function_logging
+@mcp.tool()
+async def clear_cache(endpoint: str = None) -> str:
+    """
+    Clear cache entries.
+
+    IMPORTANT: Use this tool when you need fresh data from the Omada API.
+
+    Common scenarios:
+    - After making changes in Omada (new assignments, approvals, etc.)
+    - When cache might be stale
+    - To force a fresh API call
+
+    Args:
+        endpoint: Optional specific endpoint to clear (e.g., "graphql", "identity")
+                 If not provided, clears ALL cache entries
+
+    Examples:
+        clear_cache()                    # Clear entire cache
+        clear_cache(endpoint="graphql")  # Clear only GraphQL cache
+
+    Returns:
+        Success message with count of cleared entries
+    """
+    try:
+        if not CACHE_ENABLED or cache is None:
+            return json.dumps({
+                "cache_enabled": False,
+                "message": "Cache is disabled. No cache entries to clear."
+            }, indent=2)
+
+        # Clear cache
+        deleted_count = cache.invalidate(endpoint=endpoint)
+
+        if endpoint:
+            message = f"✅ Cache cleared for endpoint: {endpoint}"
+            logger.info(f"🗑️ Cache cleared for endpoint '{endpoint}' - {deleted_count} entries deleted")
+        else:
+            message = f"✅ Entire cache cleared"
+            logger.info(f"🗑️ ENTIRE cache cleared - {deleted_count} entries deleted")
+
+        return json.dumps({
+            "success": True,
+            "message": message,
+            "entries_deleted": deleted_count,
+            "endpoint": endpoint or "all"
+        }, indent=2)
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=f"Error clearing cache: {str(e)}"
+        )
+
+@with_function_logging
+@mcp.tool()
+async def view_cache_contents_detailed(limit: int = 10, include_expired: bool = False) -> str:
+    """
+    View detailed cache contents including FULL parameters for debugging.
+
+    Shows complete query parameters to help identify why duplicate entries exist.
+    Useful for debugging cache key generation issues.
+
+    Args:
+        limit: Maximum number of entries to show (default: 10, lower for readability)
+        include_expired: Whether to include expired entries (default: False)
+
+    Returns:
+        JSON with detailed cache entries including full query parameters
+    """
+    try:
+        if not CACHE_ENABLED or cache is None:
+            return json.dumps({
+                "cache_enabled": False,
+                "message": "Cache is disabled. No cache contents to view."
+            }, indent=2)
+
+        # Get raw cache data from database
+        import sqlite3
+        conn = sqlite3.connect(cache.db_path)
+        cursor = conn.cursor()
+        now = datetime.now()
+
+        where_clause = "" if include_expired else "WHERE expires_at > ?"
+        params = [] if include_expired else [now]
+
+        cursor.execute(f"""
+            SELECT
+                cache_key,
+                endpoint,
+                query_params,
+                created_at,
+                expires_at,
+                hit_count,
+                last_accessed
+            FROM api_cache
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, params + [limit])
+
+        entries = []
+        for row in cursor.fetchall():
+            cache_key, endpoint, query_params, created_at, expires_at, hit_count, last_accessed = row
+            created_dt = datetime.fromisoformat(created_at)
+            expires_dt = datetime.fromisoformat(expires_at)
+            age_seconds = (now - created_dt).total_seconds()
+            ttl_remaining = (expires_dt - now).total_seconds()
+
+            # Parse full query params
+            try:
+                params_dict = json.loads(query_params)
+            except:
+                params_dict = {"error": "Could not parse params", "raw": query_params}
+
+            entries.append({
+                "cache_key": cache_key,
+                "cache_key_short": cache_key[:16] + "...",
+                "endpoint": endpoint,
+                "full_params": params_dict,  # FULL PARAMETERS
+                "created_at": created_at,
+                "expires_at": expires_at,
+                "age_seconds": round(age_seconds, 1),
+                "ttl_remaining_seconds": round(ttl_remaining, 1),
+                "hit_count": hit_count,
+                "last_accessed": last_accessed,
+                "status": "valid" if expires_dt > now else "expired"
+            })
+
+        conn.close()
+
+        result = {
+            "detailed_entries": entries,
+            "total_shown": len(entries),
+            "limit": limit,
+            "include_expired": include_expired,
+            "note": "This shows FULL parameters to debug duplicate entries"
+        }
+
+        logger.info(f"📋 Detailed cache contents viewed - {len(entries)} entries with full params")
+
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=f"Error viewing detailed cache contents: {str(e)}"
+        )
+
+@with_function_logging
+@mcp.tool()
+async def view_cache_contents(limit: int = 50, include_expired: bool = False) -> str:
+    """
+    View the actual contents of the cache.
+
+    Shows what data is currently cached, including:
+    - Endpoint names and parameters
+    - Cache status (valid/expired)
+    - Age and time remaining until expiration
+    - Hit counts (how many times each entry was accessed)
+    - Identity cache entries (cached users)
+
+    This is useful for:
+    - Understanding what data is cached
+    - Debugging cache behavior
+    - Identifying frequently accessed data
+    - Checking cache freshness
+
+    Args:
+        limit: Maximum number of entries to show per cache type (default: 50)
+        include_expired: Whether to include expired entries (default: False)
+
+    Examples:
+        view_cache_contents()                          # Show 50 most recent valid entries
+        view_cache_contents(limit=100)                 # Show 100 entries
+        view_cache_contents(include_expired=True)      # Include expired entries
+
+    Returns:
+        JSON with cache contents and details
+    """
+    try:
+        if not CACHE_ENABLED or cache is None:
+            return json.dumps({
+                "cache_enabled": False,
+                "message": "Cache is disabled. No cache contents to view."
+            }, indent=2)
+
+        # Get cache contents
+        contents = cache.view_cache_contents(limit=limit, include_expired=include_expired)
+
+        logger.info(f"📋 Cache contents viewed - {contents['total_shown']['api_cache']} API + {contents['total_shown']['identity_cache']} identity entries")
+
+        return json.dumps(contents, indent=2)
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=f"Error viewing cache contents: {str(e)}"
+        )
+
+@with_function_logging
+@mcp.tool()
+async def get_cache_efficiency() -> str:
+    """
+    Get detailed cache efficiency metrics and performance analysis.
+
+    Provides comprehensive cache performance data including:
+    - Hit rate percentage (how often cache is used vs API calls)
+    - Cache utilization (percentage of cached entries being reused)
+    - Most and least accessed endpoints
+    - Storage usage (database size)
+    - Performance recommendations
+
+    Metrics explained:
+    - Hit Rate: Percentage of requests served from cache (higher is better)
+      - >80% = Excellent
+      - 50-80% = Good
+      - <50% = May need optimization
+    - Utilization: Percentage of cache entries that are being accessed
+      - High utilization = Cache is effective
+      - Low utilization = Caching data that isn't needed
+
+    Use this to:
+    - Evaluate cache performance
+    - Identify optimization opportunities
+    - Understand access patterns
+    - Tune cache TTL settings
+
+    Returns:
+        JSON with detailed efficiency metrics and recommendations
+    """
+    try:
+        if not CACHE_ENABLED or cache is None:
+            return json.dumps({
+                "cache_enabled": False,
+                "message": "Cache is disabled. No efficiency metrics available."
+            }, indent=2)
+
+        # Get efficiency metrics
+        efficiency = cache.get_cache_efficiency()
+
+        logger.info(f"📊 Cache efficiency: {efficiency['overall_efficiency']['combined_hit_rate_percent']:.1f}% hit rate")
+
+        return json.dumps(efficiency, indent=2)
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=f"Error calculating cache efficiency: {str(e)}"
+        )
+
 async def _prepare_graphql_request(impersonate_user: str, graphql_version: str = None, bearer_token: str = None):
     """
     Prepare common GraphQL request components (URL, headers, token).
@@ -1064,6 +1389,134 @@ async def _prepare_graphql_request(impersonate_user: str, graphql_version: str =
     }
 
     return graphql_url, headers, token
+
+def _extract_user_identity_from_token(bearer_token: str) -> str:
+    """
+    Extract user identity from JWT bearer token for cache keying.
+
+    This ensures cache entries are user-specific, preventing users from
+    accessing each other's cached data.
+
+    Args:
+        bearer_token: JWT bearer token
+
+    Returns:
+        User identity string (email, sub claim, or token hash as fallback)
+    """
+    try:
+        # Strip "Bearer " prefix if present
+        token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
+
+        # Decode JWT without verification (we only need the payload for cache keying)
+        # Format: header.payload.signature
+        parts = token.split('.')
+        if len(parts) != 3:
+            # Not a valid JWT, fallback to token hash
+            logger.warning("Bearer token is not a valid JWT format, using token hash for cache key")
+            return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+        # Decode payload (base64url)
+        payload_encoded = parts[1]
+        # Add padding if needed
+        padding = 4 - (len(payload_encoded) % 4)
+        if padding != 4:
+            payload_encoded += '=' * padding
+
+        payload_decoded = json.loads(base64.b64decode(payload_encoded.replace('-', '+').replace('_', '/')))
+
+        # Try to extract user identity from common JWT claims
+        # Priority: email > upn > unique_name > preferred_username > sub > oid
+        user_identity = (
+            payload_decoded.get('email') or
+            payload_decoded.get('upn') or
+            payload_decoded.get('unique_name') or
+            payload_decoded.get('preferred_username') or
+            payload_decoded.get('sub') or
+            payload_decoded.get('oid')
+        )
+
+        if user_identity:
+            logger.debug(f"Extracted user identity from token for cache key: {user_identity}")
+            return str(user_identity)
+        else:
+            # No recognizable user claim, use token hash
+            logger.warning("Could not extract user identity from JWT claims, using token hash for cache key")
+            token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
+            return token_hash
+
+    except Exception as e:
+        # If anything goes wrong, fallback to token hash
+        logger.warning(f"Error extracting user identity from token: {e}, using token hash for cache key")
+        token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
+        return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+async def _execute_graphql_request_cached(query: str, impersonate_user: str,
+                                          variables: dict = None, graphql_version: str = None,
+                                          bearer_token: str = None, use_cache: bool = True) -> dict:
+    """
+    Execute a GraphQL request with caching support.
+
+    This is a wrapper around _execute_graphql_request that adds intelligent caching.
+
+    Args:
+        query: GraphQL query string
+        impersonate_user: User to impersonate in the request
+        variables: Optional GraphQL variables
+        graphql_version: GraphQL API version to use
+        bearer_token: Bearer token for authentication
+        use_cache: Whether to use cache (default: True)
+
+    Returns:
+        dict: Parsed response with cache metadata
+    """
+    # Check if this is a mutation (write operation)
+    is_mutation = "mutation" in query.lower()
+
+    # Determine if we should use cache
+    should_use_cache = CACHE_ENABLED and cache is not None and use_cache and not is_mutation
+
+    # Extract user identity from bearer token for user-specific caching
+    # This prevents users from accessing each other's cached data
+    user_identity = _extract_user_identity_from_token(bearer_token) if bearer_token else "anonymous"
+
+    # Create cache key parameters - INCLUDES USER IDENTITY for security
+    cache_params = {
+        "query": query,
+        "impersonate_user": impersonate_user,
+        "variables": variables or {},
+        "version": graphql_version or "3.0",
+        "user_identity": user_identity  # CRITICAL: Ensures cache is user-specific
+    }
+
+    endpoint = "graphql"
+
+    # Try to get from cache first
+    if should_use_cache:
+        cached_result = cache.get(endpoint, cache_params)
+        if cached_result:
+            # Cache HIT - return cached data (logging happens in cache.get())
+            return cached_result
+
+    # Cache MISS or caching disabled - execute the actual request
+    result = await _execute_graphql_request(
+        query, impersonate_user, variables, graphql_version, bearer_token
+    )
+
+    # Store successful results in cache
+    if should_use_cache and result.get("success"):
+        # Get TTL based on query content
+        ttl = get_ttl_for_operation(query, is_mutation)
+        if ttl > 0:
+            cache.set(endpoint, cache_params, result, ttl)
+
+    # Add cache metadata to result
+    result["_cache_metadata"] = {
+        "cached": False,
+        "cache_enabled": CACHE_ENABLED,
+        "cache_used": should_use_cache
+    }
+
+    return result
 
 async def _execute_graphql_request(query: str, impersonate_user: str,
                                  variables: dict = None, graphql_version: str = None,
@@ -1132,7 +1585,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
 @with_function_logging
 @mcp.tool()
 async def get_access_requests(impersonate_user: str, bearer_token: str, filter_field: str = None, filter_value: str = None,
-                              summary_mode: bool = True) -> str:
+                              summary_mode: bool = True, use_cache: bool = True) -> str:
     """Get access requests from Omada GraphQL API using user impersonation.
 
     Args:
@@ -1142,6 +1595,7 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
         summary_mode: If True (default), returns only key fields (id, beneficiary, resource, status)
                      If False, returns all fields
         bearer_token: Optional bearer token to use instead of acquiring a new one
+        use_cache: Whether to use cache for this request (default: True)
 
     Returns:
         JSON string containing access requests data
@@ -1199,8 +1653,8 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
   }
 }"""
 
-        # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, bearer_token=bearer_token)
+        # Execute GraphQL request WITH CACHING
+        result = await _execute_graphql_request_cached(query, impersonate_user, bearer_token=bearer_token, use_cache=use_cache)
 
         if result["success"]:
             data = result["data"]
@@ -1591,8 +2045,10 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
 
         logger.debug(f"GraphQL query: {query}")
 
-        # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, bearer_token=bearer_token)
+        # Execute GraphQL request with caching support
+        result = await _execute_graphql_request_cached(
+            query, impersonate_user, bearer_token=bearer_token, use_cache=True
+        )
 
         if result["success"]:
             data = result["data"]
@@ -1720,6 +2176,9 @@ async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: st
     Returns:
         JSON response with identities data including pagination metadata or error message
     """
+    # ENTRY LOGGING
+    logger.debug(f"DEBUG: ENTRY - get_identities_for_beneficiary(impersonate_user={impersonate_user}, page={page}, rows={rows})")
+
     try:
         # Validate mandatory fields using helper
         error = validate_required_fields(impersonate_user=impersonate_user)
@@ -1754,8 +2213,10 @@ async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: st
 
         logger.debug(f"GraphQL query: {query}")
 
-        # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, bearer_token=bearer_token)
+        # Execute GraphQL request with caching support
+        result = await _execute_graphql_request_cached(
+            query, impersonate_user, bearer_token=bearer_token, use_cache=True
+        )
 
         if result["success"]:
             data = result["data"]
@@ -1818,7 +2279,8 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                                              identity_name_operator: str = "CONTAINS",
                                              sort_by: str = "RESOURCE_NAME",
                                              page: int = 1,
-                                             rows: int = 50) -> str:
+                                             rows: int = 50,
+                                             use_cache: bool = True) -> str:
     """
     Get detailed calculated assignments with compliance and violation status using Omada GraphQL API.
 
@@ -1927,6 +2389,9 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
     logger.setLevel(new_level)
     for handler in logger.handlers:
         handler.setLevel(new_level)
+
+    # ENTRY LOGGING
+    logger.debug(f"DEBUG: ENTRY - get_calculated_assignments_detailed(identity_ids={identity_ids}, impersonate_user={impersonate_user}, resource_type_name={resource_type_name}, compliance_status={compliance_status}, account_name={account_name}, system_name={system_name}, identity_name={identity_name}, page={page}, rows={rows})")
 
     try:
         # Validate mandatory fields using helper
@@ -2083,12 +2548,13 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
 
         logger.debug(f"GraphQL query: {query}")
 
-        # Execute GraphQL request with version 2.19
-        result = await _execute_graphql_request(
+        # Execute GraphQL request with version 2.19 WITH CACHING
+        result = await _execute_graphql_request_cached(
             query,
             impersonate_user,
             graphql_version="2.19",
-            bearer_token=bearer_token
+            bearer_token=bearer_token,
+            use_cache=use_cache
         )
 
         if result["success"]:
@@ -2187,6 +2653,9 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
         - Personal: id="a1b2c3d4-..."
         - Finance Department: id="e5f6g7h8-..."
     """
+    # ENTRY LOGGING
+    logger.debug(f"DEBUG: ENTRY - get_identity_contexts(identity_id={identity_id}, impersonate_user={impersonate_user})")
+
     # Validate mandatory fields
     error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
     if error:
@@ -2209,8 +2678,10 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
 
         logger.debug(f"GraphQL query: {query}")
 
-        # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, bearer_token=bearer_token)
+        # Execute GraphQL request with caching support
+        result = await _execute_graphql_request_cached(
+            query, impersonate_user, bearer_token=bearer_token, use_cache=True
+        )
 
         if result["success"]:
             data = result["data"]
@@ -2290,6 +2761,9 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
         JSON response with pending approval survey questions including resource and system details,
         or error message if the request fails
     """
+    # ENTRY LOGGING
+    logger.debug(f"DEBUG: ENTRY - get_pending_approvals(impersonate_user={impersonate_user}, workflow_step={workflow_step}, summary_mode={summary_mode})")
+
     try:
         # Validate mandatory fields using helper
         error = validate_required_fields(impersonate_user=impersonate_user)
@@ -2341,12 +2815,13 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
 
         logger.debug(f"GraphQL query: {query}")
 
-        # Execute GraphQL request with version 3.0
-        result = await _execute_graphql_request(
+        # Execute GraphQL request with version 3.0 and caching support
+        result = await _execute_graphql_request_cached(
             query,
             impersonate_user,
             graphql_version="3.0",
-            bearer_token=bearer_token
+            bearer_token=bearer_token,
+            use_cache=True
         )
 
         if result["success"]:
@@ -2425,6 +2900,9 @@ async def get_approval_details(impersonate_user: str, bearer_token: str,
     Returns:
         JSON response with FULL approval details including surveyId and surveyObjectKey
     """
+    # ENTRY LOGGING
+    logger.debug(f"DEBUG: ENTRY - get_approval_details(impersonate_user={impersonate_user}, workflow_step={workflow_step})")
+
     # Call get_pending_approvals with summary_mode=False to get all fields
     return await get_pending_approvals(
         impersonate_user=impersonate_user,
