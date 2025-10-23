@@ -325,7 +325,6 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
 async def query_omada_entity(entity_type: str = "Identity",
                             filters: dict = None,
                             omada_base_url: str = None,
-                            scope: str = None,
                             count_only: bool = False,
                             summary_mode: bool = True,
                             top: int = None,
@@ -382,7 +381,6 @@ async def query_omada_entity(entity_type: str = "Identity",
                     "custom_filter": "FIRSTNAME eq 'John' and LASTNAME eq 'Doe'"  # Custom OData filter
                 }
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
         count_only: If True, returns only the count of matching records
         summary_mode: If True, returns only key fields as a summary instead of full objects
         top: Maximum number of records to return (OData $top)
@@ -656,7 +654,6 @@ async def query_omada_entity(entity_type: str = "Identity",
 @mcp.tool()
 async def query_omada_identity(field_filters: list = None,
                               omada_base_url: str = None,
-                              scope: str = None,
                               filter_condition: str = None,
                               count_only: bool = False,
                               summary_mode: bool = True,
@@ -701,7 +698,6 @@ async def query_omada_identity(field_filters: list = None,
                        {"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
                        {"field": "LASTNAME", "value": "Taylor", "operator": "startswith"}]
         omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
         filter_condition: Custom OData filter condition
         count_only: If True, returns only the count
         top: Maximum number of records to return
@@ -729,7 +725,6 @@ async def query_omada_identity(field_filters: list = None,
         entity_type="Identity",
         filters=filters if filters else None,
         omada_base_url=omada_base_url,
-        scope=scope,
         count_only=count_only,
         summary_mode=summary_mode,
         top=top,
@@ -746,7 +741,6 @@ async def query_omada_resources(resource_type_id: int = None,
                                resource_type_name: str = None,
                                system_id: int = None,
                                omada_base_url: str = None,
-                               scope: str = None,
                                filter_condition: str = None,
                                count_only: bool = False,
                                top: int = None,
@@ -776,7 +770,6 @@ async def query_omada_resources(resource_type_id: int = None,
         resource_type_name: Name-based lookup for resource type (e.g., "APPLICATION_ROLES")
         system_id: Numeric ID for system reference to filter resources by system (e.g., 1011066)
         omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
         filter_condition: Custom OData filter condition
         count_only: If True, returns only the count
         top: Maximum number of records to return
@@ -804,7 +797,6 @@ async def query_omada_resources(resource_type_id: int = None,
         entity_type="Resource",
         filters=filters if filters else None,
         omada_base_url=omada_base_url,
-        scope=scope,
         count_only=count_only,
         top=top,
         skip=skip,
@@ -819,7 +811,6 @@ async def query_omada_resources(resource_type_id: int = None,
 async def query_omada_entities(entity_type: str = "Identity",
                               field_filters: list = None,
                               omada_base_url: str = None,
-                              scope: str = None,
                               filter_condition: str = None,
                               count_only: bool = False,
                               top: int = None,
@@ -838,7 +829,6 @@ async def query_omada_entities(entity_type: str = "Identity",
                       [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
                        {"field": "LASTNAME", "value": "Taylor", "operator": "startswith"}]
         omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
         filter_condition: Custom OData filter condition
         count_only: If True, returns only the count
         top: Maximum number of records to return
@@ -863,7 +853,6 @@ async def query_omada_entities(entity_type: str = "Identity",
         entity_type=entity_type,
         filters=filters if filters else None,
         omada_base_url=omada_base_url,
-        scope=scope,
         count_only=count_only,
         top=top,
         skip=skip,
@@ -880,7 +869,6 @@ async def query_calculated_assignments(identity_id: int = None,
                                       select_fields: str = "AssignmentKey,AccountName",
                                       expand: str = "Identity,Resource,ResourceType",
                                       omada_base_url: str = None,
-                                      scope: str = None,
                                       filter_condition: str = None,
                                       top: int = None,
                                       skip: int = None,
@@ -895,7 +883,6 @@ async def query_calculated_assignments(identity_id: int = None,
         select_fields: Fields to select (default: "AssignmentKey,AccountName")
         expand: Related entities to expand (default: "Identity,Resource,ResourceType")
         omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
         filter_condition: Custom OData filter condition
         top: Maximum number of records to return
         skip: Number of records to skip
@@ -917,7 +904,6 @@ async def query_calculated_assignments(identity_id: int = None,
         entity_type="CalculatedAssignments",
         filters=filters if filters else None,
         omada_base_url=omada_base_url,
-        scope=scope,
         top=top,
         skip=skip,
         select_fields=select_fields,
@@ -930,7 +916,6 @@ async def query_calculated_assignments(identity_id: int = None,
 @with_function_logging
 @mcp.tool()
 async def get_all_omada_identities(omada_base_url: str = None,
-                                  scope: str = None,
                                   top: int = 1000,
                                   skip: int = None,
                                   select_fields: str = None,
@@ -942,7 +927,6 @@ async def get_all_omada_identities(omada_base_url: str = None,
 
     Args:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
         top: Maximum number of records to return (default: 1000)
         skip: Number of records to skip for pagination
         select_fields: Comma-separated list of fields to select
@@ -955,7 +939,6 @@ async def get_all_omada_identities(omada_base_url: str = None,
     """
     return await query_omada_identity(
         omada_base_url=omada_base_url,
-        scope=scope,
         top=top,
         skip=skip,
         select_fields=select_fields,
@@ -1014,7 +997,7 @@ async def check_omada_config() -> str:
             message=str(e)
         )
 
-async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = None, scope: str = None, graphql_version: str = None, bearer_token: str = None):
+async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = None, graphql_version: str = None, bearer_token: str = None):
     """
     Prepare common GraphQL request components (URL, headers, token).
 
@@ -1024,7 +1007,6 @@ async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = 
     Args:
         impersonate_user: User to impersonate in the request
         omada_base_url: Base URL for Omada instance
-        scope: OAuth2 scope (deprecated - kept for backward compatibility)
         graphql_version: GraphQL API version to use
         bearer_token: Bearer token (REQUIRED) - obtain from oauth_mcp_server
 
@@ -1075,7 +1057,7 @@ async def _prepare_graphql_request(impersonate_user: str, omada_base_url: str = 
     return graphql_url, headers, token
 
 async def _execute_graphql_request(query: str, impersonate_user: str,
-                                 omada_base_url: str = None, scope: str = None,
+                                 omada_base_url: str = None,
                                  variables: dict = None, graphql_version: str = None,
                                  bearer_token: str = None) -> dict:
     """
@@ -1085,7 +1067,6 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
         query: GraphQL query string
         impersonate_user: User to impersonate in the request
         omada_base_url: Base URL for Omada instance
-        scope: OAuth2 scope for token acquisition
         variables: Optional GraphQL variables
         graphql_version: GraphQL API version to use
         bearer_token: Optional bearer token to use instead of acquiring a new one
@@ -1096,7 +1077,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
     try:
         # Setup
         graphql_url, headers, token = await _prepare_graphql_request(
-            impersonate_user, omada_base_url, scope, graphql_version, bearer_token
+            impersonate_user, omada_base_url, graphql_version, bearer_token
         )
 
         # Build payload
@@ -1263,7 +1244,7 @@ async def get_access_requests(impersonate_user: str, filter_field: str = None, f
 @mcp.tool()
 async def create_access_request(impersonate_user: str, reason: str, context: str,
                               resources: str, valid_from: str = None, valid_to: str = None,
-                              omada_base_url: str = None, scope: str = None,
+                              omada_base_url: str = None,
                               bearer_token: str = None) -> str:
     """Create an access request using GraphQL mutation.
 
@@ -1286,7 +1267,6 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
         valid_from: Optional valid from date/time
         valid_to: Optional valid to date/time
         omada_base_url: Optional Omada base URL (uses env var if not provided)
-        scope: Optional OAuth scope (uses default if not provided)
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Logging:
@@ -1312,7 +1292,6 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
         identity_result = await query_omada_identity(
             field_filters=[{"field": "EMAIL", "value": impersonate_user, "operator": "eq"}],
             omada_base_url=omada_base_url,
-            scope=scope,
             select_fields="UId",
             top=1,
             bearer_token=bearer_token
@@ -1387,7 +1366,6 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
             query=mutation,
             impersonate_user=impersonate_user,
             omada_base_url=omada_base_url,
-            scope=scope,
             graphql_version="1.1",
             bearer_token=bearer_token
         )
@@ -1505,7 +1483,7 @@ async def create_access_request(impersonate_user: str, reason: str, context: str
 async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                                        system_id: str = None, context_id: str = None,
                                        resource_name: str = None,
-                                       omada_base_url: str = None, scope: str = None,
+                                       omada_base_url: str = None,
                                        bearer_token: str = None) -> str:
     """
     Get resources available for an ACCESS REQUEST for a specific user/identity using Omada GraphQL API.
@@ -1551,7 +1529,6 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         resource_name: Resource name to filter by (string, partial match supported)
                       Example: "Sales" will match "Sales Team Access", "Sales Reports", etc.
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
@@ -1615,7 +1592,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope, bearer_token=bearer_token)
+        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, bearer_token=bearer_token)
 
         if result["success"]:
             data = result["data"]
@@ -1665,7 +1642,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
 async def get_requestable_resources(identity_id: str, impersonate_user: str,
                                    system_id: str = None, context_id: str = None,
                                    resource_name: str = None,
-                                   omada_base_url: str = None, scope: str = None,
+                                   omada_base_url: str = None,
                                    bearer_token: str = None) -> str:
     """
     Get resources that a user can request access to (alias for get_resources_for_beneficiary).
@@ -1711,7 +1688,6 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str,
         context_id=context_id,
         resource_name=resource_name,
         omada_base_url=omada_base_url,
-        scope=scope,
         bearer_token=bearer_token
     )
 
@@ -1720,7 +1696,7 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str,
 @mcp.tool()
 async def get_identities_for_beneficiary(impersonate_user: str,
                                          page: int = None, rows: int = None,
-                                         omada_base_url: str = None, scope: str = None,
+                                         omada_base_url: str = None,
                                          bearer_token: str = None) -> str:
     """
     Get a list of identities available for access requests using Omada GraphQL API.
@@ -1744,7 +1720,6 @@ async def get_identities_for_beneficiary(impersonate_user: str,
         page: Page number for pagination (e.g., 1, 2, 3...)
         rows: Number of rows per page (e.g., 10, 20, 50...)
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
@@ -1785,7 +1760,7 @@ async def get_identities_for_beneficiary(impersonate_user: str,
         logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope, bearer_token=bearer_token)
+        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, bearer_token=bearer_token)
 
         if result["success"]:
             data = result["data"]
@@ -1849,8 +1824,7 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                                              sort_by: str = "RESOURCE_NAME",
                                              page: int = 1,
                                              rows: int = 50,
-                                             omada_base_url: str = None,
-                                             scope: str = None) -> str:
+                                             omada_base_url: str = None) -> str:
     """
     Get detailed calculated assignments with compliance and violation status using Omada GraphQL API.
 
@@ -1941,7 +1915,6 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
         rows: Number of rows per page (default: 50, minimum: 1, maximum: 1000)
              Controls page size for pagination
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
 
     Returns:
         JSON response with detailed assignments including:
@@ -2122,7 +2095,6 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
             query,
             impersonate_user,
             omada_base_url,
-            scope,
             graphql_version="2.19",
             bearer_token=bearer_token
         )
@@ -2184,7 +2156,7 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
 @with_function_logging
 @mcp.tool()
 async def get_identity_contexts(identity_id: str, impersonate_user: str,
-                               omada_base_url: str = None, scope: str = None,
+                               omada_base_url: str = None,
                                bearer_token: str = None) -> str:
     """
     Get contexts for a specific identity using Omada GraphQL API.
@@ -2200,7 +2172,6 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
 
     Optional parameters:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
@@ -2251,7 +2222,7 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
         logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request
-        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, scope, bearer_token=bearer_token)
+        result = await _execute_graphql_request(query, impersonate_user, omada_base_url, bearer_token=bearer_token)
 
         if result["success"]:
             data = result["data"]
@@ -2298,7 +2269,7 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str,
 @mcp.tool()
 async def get_pending_approvals(impersonate_user: str, workflow_step: str = None,
                                 summary_mode: bool = True,
-                                omada_base_url: str = None, scope: str = None,
+                                omada_base_url: str = None,
                                 bearer_token: str = None) -> str:
     """
     Get pending approval survey questions from Omada GraphQL API.
@@ -2316,7 +2287,6 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
         summary_mode: If True (default), returns only key fields (workflowStep, workflowStepTitle, reason)
                      If False, returns all fields including surveyId and surveyObjectKey
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     ⚠️ IMPORTANT FOR CLAUDE - DISPLAY TO USER:
@@ -2389,7 +2359,6 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
             query,
             impersonate_user,
             omada_base_url,
-            scope,
             graphql_version="3.0",
             bearer_token=bearer_token
         )
@@ -2451,7 +2420,7 @@ async def get_pending_approvals(impersonate_user: str, workflow_step: str = None
 @with_function_logging
 @mcp.tool()
 async def get_approval_details(impersonate_user: str, workflow_step: str = None,
-                               omada_base_url: str = None, scope: str = None,
+                               omada_base_url: str = None,
                                bearer_token: str = None) -> str:
     """
     Get FULL approval details including technical IDs (surveyId, surveyObjectKey) needed for making decisions.
@@ -2467,7 +2436,6 @@ async def get_approval_details(impersonate_user: str, workflow_step: str = None,
     Optional parameters:
         workflow_step: Filter by workflow step (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
         omada_base_url: Omada instance URL
-        scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
@@ -2479,7 +2447,6 @@ async def get_approval_details(impersonate_user: str, workflow_step: str = None,
         workflow_step=workflow_step,
         summary_mode=False,  # Get full details including technical IDs
         omada_base_url=omada_base_url,
-        scope=scope,
         bearer_token=bearer_token
     )
 
@@ -2488,7 +2455,7 @@ async def get_approval_details(impersonate_user: str, workflow_step: str = None,
 @mcp.tool()
 async def make_approval_decision(impersonate_user: str, survey_id: str,
                                  survey_object_key: str, decision: str,
-                                 omada_base_url: str = None, scope: str = None,
+                                 omada_base_url: str = None,
                                  bearer_token: str = None) -> str:
     """
     Make an approval decision (APPROVE or REJECT) for an access request using Omada GraphQL API.
@@ -2520,7 +2487,6 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
 
     Optional parameters:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
@@ -2568,7 +2534,6 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
             query=mutation,
             impersonate_user=impersonate_user,
             omada_base_url=omada_base_url,
-            scope=scope,
             graphql_version="3.0",
             bearer_token=bearer_token
         )
@@ -2636,7 +2601,6 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
 @mcp.tool()
 async def get_compliance_workbench_survey_and_compliance_status(impersonate_user: str,
                                                                 omada_base_url: str = None,
-                                                                scope: str = None,
                                                                 bearer_token: str = None) -> str:
     """
     Get compliance workbench configuration including compliance status values and survey templates from Omada GraphQL API.
@@ -2654,7 +2618,6 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
 
     Optional parameters:
         omada_base_url: Omada instance URL (if not provided, uses OMADA_BASE_URL env var)
-        scope: OAuth2 scope for the token
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Returns:
@@ -2692,7 +2655,6 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
             query,
             impersonate_user,
             omada_base_url,
-            scope,
             graphql_version="3.0",
             bearer_token=bearer_token
         )
