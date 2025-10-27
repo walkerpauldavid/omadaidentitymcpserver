@@ -14,3 +14,7 @@ wheels/
 
 # Log files
 *.log
+
+# Cache database
+*.db
+omada_cache.db
