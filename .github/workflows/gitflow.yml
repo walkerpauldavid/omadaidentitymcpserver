@@ -1,0 +1,98 @@
+name: GitFlow Semantic Versioning and Branch Policy
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - release/*
+      - hotfix/*
+  pull_request:
+    branches:
+      - main
+      - develop
+      - release/*
+
+permissions:
+  contents: write  # needed for tagging/releases
+
+jobs:
+  branch-policy:
+    name: Validate Branch Naming and Flow
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check source branch naming
+        run: |
+          TARGET="${{ github.base_ref }}"
+          SOURCE="${{ github.head_ref || github.ref_name }}"
+
+          echo "Target: $TARGET"
+          echo "Source: $SOURCE"
+
+          # Only enforce for PRs
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "$TARGET" == "main" ]]; then
+              if [[ ! "$SOURCE" =~ ^(develop|hotfix/) ]]; then
+                echo "❌ PRs to main must come from develop or hotfix/*"
+                exit 1
+              fi
+            elif [[ "$TARGET" == "develop" ]]; then
+              if [[ ! "$SOURCE" =~ ^(feature/|release/) ]]; then
+                echo "❌ PRs to develop must come from feature/* or release/*"
+                exit 1
+              fi
+            fi
+            if [[ "$TARGET" =~ ^release/ ]]; then
+              if [[ ! "$SOURCE" =~ ^(develop|hotfix/) ]]; then
+                echo "❌ PRs to release/* must come from develop or hotfix/*"
+                exit 1
+              fi
+            fi
+            echo "✅ Branch flow validated ($SOURCE → $TARGET)"
+          fi
+
+  semantic-release:
+    name: Semantic Versioning and Release
+    runs-on: ubuntu-latest
+    needs: branch-policy
+    if: github.event_name == 'push'  # only run on push events, not PRs
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install semantic release
+        run: pip install python-semantic-release
+
+      - name: Determine bump type
+        id: bump
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          echo "Detected branch: $BRANCH"
+          if [[ "$BRANCH" == "develop" ]]; then
+            echo "type=minor" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" =~ ^release/ ]]; then
+            echo "type=none" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" =~ ^hotfix/ ]]; then
+            echo "type=patch" >> $GITHUB_OUTPUT
+          elif [[ "$BRANCH" == "main" ]]; then
+            echo "type=major" >> $GITHUB_OUTPUT
+          else
+            echo "type=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run semantic release
+        if: steps.bump.outputs.type != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHON_SEMANTIC_RELEASE_LEVEL: ${{ steps.bump.outputs.type }}
+        run: |
+          semantic-release publish
