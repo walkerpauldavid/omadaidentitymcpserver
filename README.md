@@ -1,0 +1,327 @@
+# Omada Identity MCP Server
+
+A Model Context Protocol (MCP) server that provides integration with Omada Identity Governance and Administration system. This server enables Claude Desktop and other MCP clients to interact with Omada's OData REST API and GraphQL API for identity management, access requests, and compliance monitoring.
+
+## Features
+
+- **Bearer Token Authentication** - Uses bearer tokens for API authentication (OAuth handled by oauth_mcp_server)
+- **OData API Integration** - Query identities, resources, roles, and assignments
+- **GraphQL API Support** - Access requests, contexts, and detailed calculated assignments
+- **Comprehensive Logging** - File and console logging with per-function log level control
+- **Error Handling** - Custom exceptions with detailed error responses
+
+## Prerequisites
+
+- Python 3.8 or higher
+- Omada Identity Cloud instance
+- Bearer token for authentication (obtain from oauth_mcp_server)
+- Required Python packages (see Installation)
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/walkerpauldavid/omadaidentitymcpserver.git
+cd omadaidentitymcpserver
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Configure environment variables (see Configuration section)
+
+## Configuration
+
+### Setting up the .env File
+
+The `.env` file contains configuration settings and is **not included in the repository** for security reasons. You must create this file manually.
+
+**Note:** OAuth2 authentication has been moved to a separate `oauth_mcp_server` project. This server uses bearer tokens provided by the OAuth server.
+
+**Step-by-step setup:**
+
+1. **Create the .env file** in the project root directory:
+   ```bash
+   cd omada_mcp_server
+   touch .env    # On Linux/Mac
+   # Or create manually on Windows
+   ```
+
+2. **Copy the template below** into your `.env` file
+
+3. **Replace placeholder values** with your actual configuration:
+   - Get Omada URL from your Omada instance
+   - Configure logging preferences as needed
+
+### .env File Template
+
+Copy this complete template into your `.env` file and update the values:
+
+```bash
+# =============================================================================
+# REQUIRED CONFIGURATION - You must set these values
+# =============================================================================
+
+# Omada Identity Configuration
+OMADA_BASE_URL=https://your-instance.omada.cloud # Your Omada instance URL (no trailing slash)
+GRAPHQL_ENDPOINT_VERSION=3.0                     # GraphQL API version (default: 3.0)
+
+# =============================================================================
+# OPTIONAL CONFIGURATION - Customize as needed
+# =============================================================================
+
+# Logging Configuration
+LOG_LEVEL=INFO                                   # Global log level: DEBUG, INFO, WARNING, ERROR
+LOG_FILE=omada_mcp_server.log                   # Log file path (relative or absolute)
+                                                 # Examples:
+                                                 # - omada_mcp_server.log (current directory)
+                                                 # - logs/omada_mcp_server.log (subdirectory)
+                                                 # - /var/log/omada_mcp_server.log (absolute path)
+
+# Per-Function Log Levels (override global LOG_LEVEL for specific functions)
+# Useful for debugging specific operations without flooding logs
+LOG_LEVEL_get_identity_contexts=DEBUG
+LOG_LEVEL_get_resources_for_beneficiary=DEBUG
+LOG_LEVEL_get_calculated_assignments_detailed=DEBUG
+LOG_LEVEL_create_access_request=DEBUG
+LOG_LEVEL_get_access_requests=INFO
+
+# Approval Workflow Functions
+LOG_LEVEL_get_pending_approvals=DEBUG
+LOG_LEVEL_get_approval_details=DEBUG
+LOG_LEVEL_make_approval_decision=DEBUG
+
+# Core Query Functions
+LOG_LEVEL_query_omada_entity=INFO
+LOG_LEVEL_query_omada_identity=INFO
+LOG_LEVEL_query_omada_resources=INFO
+LOG_LEVEL_query_omada_entities=INFO
+LOG_LEVEL_query_calculated_assignments=INFO
+
+# Identity Management Functions
+LOG_LEVEL_get_all_omada_identities=INFO
+
+# Authentication Functions
+LOG_LEVEL_get_azure_token=INFO
+LOG_LEVEL_get_azure_token_info=INFO
+LOG_LEVEL_test_azure_token=INFO
+
+# Utility Functions
+LOG_LEVEL_ping=INFO
+
+# Omada Resource Type Mappings
+# Get these IDs from your Omada instance (Resource Types section)
+RESOURCE_TYPE_APPLICATION_ROLES=1011066
+# Add more resource types as needed:
+# RESOURCE_TYPE_BUSINESS_ROLES=1011067
+# RESOURCE_TYPE_IT_ROLES=1011068
+# RESOURCE_TYPE_AD_GROUPS=1011069
+```
+
+### How to Get Your Omada URL
+
+Your Omada base URL is the URL you use to access your Omada instance:
+- Format: `https://your-company-name.omada.cloud`
+- **Do not include** a trailing slash
+- Example: `https://pawa-poc2.omada.cloud`
+
+### Verifying Your Configuration
+
+After creating your `.env` file, you can test the configuration:
+
+```bash
+# Use the ping function to verify the server starts
+python server.py
+```
+
+### Authentication
+
+This server requires bearer tokens for API authentication. OAuth2 token generation has been moved to the separate `oauth_mcp_server` project. Use that server to obtain bearer tokens, then provide them when calling functions in this server.
+
+## Available Functions
+
+**Note:** OAuth2 authentication functions (`get_azure_token`, `get_azure_token_info`, `test_azure_token`) have been moved to the `oauth_mcp_server` project.
+
+### Identity Query Functions
+
+- **`query_omada_identity`** - Query identities with field filters and OData parameters
+- **`get_all_omada_identities`** - Retrieve all identities with pagination support
+- **`query_omada_entities`** - Generic query for any entity type (Identity, Resource, Role, etc.)
+- **`query_omada_entity`** - Advanced generic query with full OData support (use with `count_only=True` to count entities)
+
+### Resource Query Functions
+
+- **`query_omada_resources`** - Query resources by type and system
+- **`get_resources_for_beneficiary`** - Get resources available for access requests
+  - **Required**: `identity_id`, `impersonate_user`
+  - **Optional**: `system_id`, `context_id`
+
+### Access Request Functions
+
+- **`get_access_requests`** - Retrieve access requests with optional filtering
+  - **Required**: `impersonate_user`
+  - **Optional**: `filter_field`, `filter_value`
+
+- **`create_access_request`** - Create new access request
+  - **Required**: `impersonate_user`, `reason`, `context`, `resources`
+  - **Optional**: `valid_from`, `valid_to`
+
+- **`get_pending_approvals`** - Get pending approval survey questions (summary mode)
+  - **Required**: `impersonate_user`
+  - **Optional**: `workflow_step` (one of: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval"), `summary_mode` (default: True)
+  - Returns user-friendly summary: workflowStep, workflowStepTitle, reason
+  - Excludes technical fields: surveyId, surveyObjectKey
+  - Uses GraphQL API version 3.0
+
+- **`get_approval_details`** - Get FULL approval details including technical IDs
+  - **Required**: `impersonate_user`
+  - **Optional**: `workflow_step`
+  - Returns ALL fields including surveyId and surveyObjectKey (needed for making decisions)
+  - Use this before calling `make_approval_decision` to get required IDs
+  - Uses GraphQL API version 3.0
+
+- **`make_approval_decision`** - Make an approval decision (APPROVE or REJECT)
+  - **Required**: `impersonate_user`, `survey_id`, `survey_object_key`, `decision`
+  - `decision` must be either "APPROVE" or "REJECT"
+  - **Tip**: Call `get_approval_details` first to get survey_id and survey_object_key
+  - Uses GraphQL API version 3.0
+
+### Identity Context Functions
+
+- **`get_identity_contexts`** - Get contexts for a specific identity
+  - **Required**: `identity_id`, `impersonate_user`
+
+### Calculated Assignments Functions
+
+- **`query_calculated_assignments`** - Query calculated assignments for an identity
+  - **Optional**: `identity_id`, `select_fields`, `expand`, filters
+
+- **`get_calculated_assignments_detailed`** - Get detailed assignments with compliance and violations
+  - **Required**: `identity_id`, `impersonate_user`
+  - **Optional**: `resource_type_name`, `compliance_status`
+  - Uses GraphQL API version 2.19
+
+### Utility Functions
+
+- **`ping`** - Health check endpoint
+
+## Usage Examples
+
+### Using with Claude Desktop
+
+1. Configure the MCP server in Claude Desktop's configuration file
+
+2. Ask Claude to use the functions:
+```
+Get detailed calculated assignments for identity "5da7f8fc-0119-46b0-a6b4-06e5c78edf68"
+impersonating "user@domain.com" filtering by compliance status "NOT APPROVED"
+```
+
+### Python Testing
+
+Run test scripts from the `tests/` directory:
+
+```bash
+# Test identity contexts
+python tests/test_get_identity_contexts.py
+
+# Test calculated assignments
+python tests/test_get_calculated_assignments_detailed.py
+
+# Test access request creation
+python tests/test_create_access_request.py
+```
+
+### Running the Server
+
+```bash
+python server.py
+```
+
+## API Details
+
+### OData API
+- **Endpoint**: `{OMADA_BASE_URL}/OData/DataObjects/{EntityType}`
+- **Supported Entities**: Identity, Resource, Role, Account, Application, System, AssignmentPolicy
+- **Features**: Filtering, pagination, field selection, ordering, expansion
+
+### GraphQL API
+- **Endpoint**: `{OMADA_BASE_URL}/api/Domain/{version}`
+- **Default Version**: 3.0
+- **Assignments Version**: 2.19 (for calculated assignments)
+- **Features**: Access requests, contexts, resources, detailed assignments
+
+## Logging
+
+Logs are written to both file and console:
+- **Default log file**: `omada_mcp_server.log` in project directory
+- **Format**: `timestamp - logger_name - level - message`
+- **Per-function levels**: Control log verbosity per function via environment variables
+
+Example log output:
+```
+2024-10-01 20:30:15 - __main__ - INFO - Logging initialized. Writing logs to: /path/to/omada_mcp_server.log
+2024-10-01 20:30:16 - __main__ - DEBUG - GraphQL query: query GetContextsForIdentity { ... }
+```
+
+## Project Structure
+
+```
+omada_mcp_server/
+ server.py                          # Main MCP server implementation
+ .env                               # Environment configuration (not in git)
+ .gitignore                        # Git ignore rules
+ README.md                         # This file
+ requirements.txt                  # Python dependencies
+ graphql_*.txt                     # GraphQL query reference files
+ tests/                            # Test scripts
+    test_get_identity_contexts.py
+    test_get_calculated_assignments_detailed.py
+    test_create_access_request.py
+    ... (25+ test files)
+ utility/                          # Utility scripts
+     kill_claude.bat
+     kill_claude.ps1
+     quick_kill_claude.ps1
+```
+
+## Error Handling
+
+The server uses custom exception classes:
+- **`OmadaServerError`** - Base exception for server errors
+- **`AuthenticationError`** - OAuth2 and token failures
+- **`ODataQueryError`** - Malformed or failed OData queries
+
+All functions return JSON responses with status indicators:
+```json
+{
+  "status": "success|error|exception",
+  "message": "Description of result or error",
+  "error_type": "ValidationError|GraphQLError|etc"
+}
+```
+
+## Security Notes
+
+- Never commit `.env` file - contains configuration settings
+- Log files (`.log`) are excluded from git
+- Bearer tokens should be obtained from `oauth_mcp_server`
+- All API calls use HTTPS
+
+## Contributing
+
+1. Create a feature branch
+2. Make your changes
+3. Test thoroughly using test scripts
+4. Commit with descriptive messages
+5. Push and create pull request
+
+## License
+
+[Add your license information here]
+
+## Support
+
+For issues or questions, please open an issue on GitHub.

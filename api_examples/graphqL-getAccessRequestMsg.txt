@@ -1,0 +1,36 @@
+query MyQuery {
+  accessRequests {
+    id
+    resource {
+      id
+      name
+      system {
+        id
+        name
+      }
+      description
+    }
+    requestedBy {
+      id
+      userName
+      firstName
+      lastName
+    }
+    beneficiary {
+      id
+      identityId
+      displayName
+      firstName
+      lastName
+      contexts {
+        id
+        name
+      }
+    }
+    status {
+      approvalStatus
+    }
+    validFrom
+    validTo
+  }
+}

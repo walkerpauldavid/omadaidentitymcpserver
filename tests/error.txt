@@ -1,0 +1,4 @@
+Exception.ClassName
+Microsoft.IdentityModel.Tokens.SecurityTokenSignatureKeyNotFoundException
+Exception.Message
+IDX10503: Signature validation failed. The token's kid is: 'HS23b7Do7TcaU1RoKHwpIq24VYg', but did not match any keys in TokenValidationParameters or Configuration. Keys tried: 'Microsoft.IdentityModel.Tokens.X509SecurityKey, KeyId: 'PoVKeirIOvmTyLQ9G9BenBwos7k', InternalId: 'PoVKeirIOvmTyLQ9G9BenBwos7k'. , KeyId: PoVKeirIOvmTyLQ9G9BenBwos7k Microsoft.IdentityModel.Tokens.RsaSecurityKey, KeyId: 'PoVKeirIOvmTyLQ9G9BenBwos7k', InternalId:

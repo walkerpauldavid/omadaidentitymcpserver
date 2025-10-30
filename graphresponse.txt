@@ -1,0 +1,96 @@
+{
+  "data": {
+    "accessRequests": [
+      {
+        "id": "82dfb502-62b8-4caf-a9cb-a6d2555035db",
+        "beneficiary": {
+          "firstName": "Brian",
+          "id": "4eed0b05-06e9-426c-8e69-511b804b14eb",
+          "lastName": "Hollis",
+          "identityId": "BRIHOL"
+        }
+      },
+      {
+        "id": "8db0ea93-ddf2-401d-8dce-9184f05e3e32",
+        "beneficiary": {
+          "firstName": "Alan",
+          "id": "6816ff1b-3c0d-45b0-ba06-2d8e27740091",
+          "lastName": "Parker",
+          "identityId": "ALAPAR"
+        }
+      },
+      {
+        "id": "8db0ea93-ddf2-401d-8dce-9184f05e3e32",
+        "beneficiary": {
+          "firstName": "Al",
+          "id": "b2de648a-6783-4ac1-8b92-f26502ba1317",
+          "lastName": "Wallace",
+          "identityId": "ALWAL"
+        }
+      },
+      {
+        "id": "8db0ea93-ddf2-401d-8dce-9184f05e3e32",
+        "beneficiary": {
+          "firstName": "Adam",
+          "id": "6a28e191-511d-4ae8-a3b6-b3ef80cfffa1",
+          "lastName": "Brown",
+          "identityId": "ADABRO"
+        }
+      },
+      {
+        "id": "8db0ea93-ddf2-401d-8dce-9184f05e3e32",
+        "beneficiary": {
+          "firstName": "Adam",
+          "id": "e635a3ce-bdb1-4b8d-9cb6-4da2ceaf5a06",
+          "lastName": "Müller",
+          "identityId": "ADAMUL"
+        }
+      },
+      {
+        "id": "8db0ea93-ddf2-401d-8dce-9184f05e3e32",
+        "beneficiary": {
+          "firstName": "Paul",
+          "id": "f847738e-a96f-4ddc-ba0c-e1dd408ff469",
+          "lastName": "Walker",
+          "identityId": "PAUWAL"
+        }
+      },
+      {
+        "id": "2ad6db62-ca81-4f6e-945a-7a783ca1dba8",
+        "beneficiary": {
+          "firstName": "Paul",
+          "id": "f847738e-a96f-4ddc-ba0c-e1dd408ff469",
+          "lastName": "Walker",
+          "identityId": "PAUWAL"
+        }
+      },
+      {
+        "id": "2ad6db62-ca81-4f6e-945a-7a783ca1dba8",
+        "beneficiary": {
+          "firstName": "Paul",
+          "id": "f847738e-a96f-4ddc-ba0c-e1dd408ff469",
+          "lastName": "Walker",
+          "identityId": "PAUWAL"
+        }
+      },
+      {
+        "id": "fcaf2483-3fd8-49b1-9117-243840137ed6",
+        "beneficiary": {
+          "firstName": "Berry",
+          "id": "5da7f8fc-0119-46b0-a6b4-06e5c78edf68",
+          "lastName": "Black",
+          "identityId": "BERBLA"
+        }
+      },
+      {
+        "id": "5a200bf1-c5fa-4e43-ba6b-277fb2363768",
+        "beneficiary": {
+          "firstName": "Berry",
+          "id": "5da7f8fc-0119-46b0-a6b4-06e5c78edf68",
+          "lastName": "Black",
+          "identityId": "BERBLA"
+        }
+      }
+    ]
+  }
+}

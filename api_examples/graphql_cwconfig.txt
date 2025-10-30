@@ -1,0 +1,15 @@
+query MyQuery {
+  complianceWorkbenchConfiguration {
+    complianceStatus {
+      name
+      value
+    }
+    surveyTemplates {
+      name
+      id
+      surveyTemplateType
+      systemName
+      surveyInitiationActivityId
+    }
+  }
+}

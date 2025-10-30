@@ -1,0 +1,1 @@
+{"query":"query accessRequest {\r\n    accessRequest {\r\n        resources(filter: \"${resource_name}\")\r\n        {\r\n            description\r\n        id\r\n        }\r\n    }\r\n}","variables":{}}

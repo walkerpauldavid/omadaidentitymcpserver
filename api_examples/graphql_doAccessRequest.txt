@@ -1,0 +1,22 @@
+mutation MyMutation {
+  createAccessRequest(
+    accessRequest: {reason: "Rozi told me to do it", identities: {id: "5da7f8fc-0119-46b0-a6b4-06e5c78edf68"}, 
+resources: {id: "fa58b111-7e91-4723-b998-2df8c0758568"}, context: "227266b8-4810-4ba5-98f2-a974e181adcf"}
+  ) {
+    id
+    status {
+      approvalStatus
+      requestAssignmentState
+    }
+    resource {
+      name
+      id
+      system {
+        name
+        id
+      }
+    }
+    validFrom
+    validTo
+  }
+}
