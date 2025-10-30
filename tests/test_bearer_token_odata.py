@@ -20,18 +20,20 @@ sys.path.insert(0, str(parent_dir))
 
 # Load environment variables
 from dotenv import load_dotenv
-load_dotenv(parent_dir / '.env')
+
+load_dotenv(parent_dir / ".env")
+
 
 def read_bearer_token():
     """Read bearer token from bearer.txt in utility folder"""
-    token_file = Path(__file__).parent / 'bearer.txt'
+    token_file = Path(__file__).parent / "bearer.txt"
 
     if not token_file.exists():
         print(f"❌ Token file not found: {token_file}")
         print("Please create bearer.txt in the utility folder with your bearer token")
         sys.exit(1)
 
-    with open(token_file, 'r') as f:
+    with open(token_file, "r") as f:
         token = f.read().strip()
 
     # Strip "Bearer " prefix if present
@@ -40,6 +42,7 @@ def read_bearer_token():
     print(f"✅ Loaded bearer token from {token_file}")
     print(f"   Token preview: {token[:30]}...")
     return token
+
 
 def test_odata_identity(base_url, token, impersonate_user=None):
     """Test OData API with a simple Identity query"""
@@ -55,7 +58,7 @@ def test_odata_identity(base_url, token, impersonate_user=None):
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }
 
     # Add impersonate_user header if provided (required for user-delegated tokens)
@@ -78,7 +81,9 @@ def test_odata_identity(base_url, token, impersonate_user=None):
             print(f"✅ SUCCESS! Retrieved {count} identities")
             print(f"\n📋 Sample Data:")
             for i, identity in enumerate(identities[:3], 1):
-                print(f"   {i}. {identity.get('FIRSTNAME', 'N/A')} {identity.get('LASTNAME', 'N/A')} ({identity.get('EMAIL', 'N/A')})")
+                print(
+                    f"   {i}. {identity.get('FIRSTNAME', 'N/A')} {identity.get('LASTNAME', 'N/A')} ({identity.get('EMAIL', 'N/A')})"
+                )
 
             return True
 
@@ -109,11 +114,14 @@ def test_odata_identity(base_url, token, impersonate_user=None):
         print(f"   Exception type: {type(e).__name__}")
         return False
 
+
 def test_odata_resource(base_url, token):
     """Test OData API with a Resource query"""
 
     # Build OData URL - get top 5 resources
-    endpoint_url = f"{base_url}/OData/DataObjects/Resource?$top=5&$select=Id,Name,Description"
+    endpoint_url = (
+        f"{base_url}/OData/DataObjects/Resource?$top=5&$select=Id,Name,Description"
+    )
 
     print(f"\n🔍 Testing OData Resource endpoint:")
     print(f"   URL: {endpoint_url}")
@@ -122,7 +130,7 @@ def test_odata_resource(base_url, token):
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Accept": "application/json",
     }
 
     try:
@@ -138,7 +146,9 @@ def test_odata_resource(base_url, token):
             print(f"✅ SUCCESS! Retrieved {count} resources")
             print(f"\n📋 Sample Data:")
             for i, resource in enumerate(resources[:3], 1):
-                print(f"   {i}. {resource.get('Name', 'N/A')} - {resource.get('Description', 'N/A')[:50]}")
+                print(
+                    f"   {i}. {resource.get('Name', 'N/A')} - {resource.get('Description', 'N/A')[:50]}"
+                )
 
             return True
 
@@ -149,6 +159,7 @@ def test_odata_resource(base_url, token):
     except Exception as e:
         print(f"❌ ERROR: {str(e)}")
         return False
+
 
 def main():
     """Main test function"""
@@ -162,7 +173,7 @@ def main():
         print("❌ OMADA_BASE_URL not found in .env file")
         sys.exit(1)
 
-    base_url = base_url.rstrip('/')
+    base_url = base_url.rstrip("/")
     print(f"\n🌐 Omada Base URL: {base_url}")
 
     # Read bearer token
@@ -176,7 +187,9 @@ def main():
     if impersonate_user:
         print(f"   Will use impersonate_user: {impersonate_user}")
     else:
-        print(f"   No impersonate_user specified (may cause 403 for user-delegated tokens)")
+        print(
+            f"   No impersonate_user specified (may cause 403 for user-delegated tokens)"
+        )
 
     # Test Identity endpoint
     identity_success = test_odata_identity(base_url, token, impersonate_user)
@@ -205,6 +218,7 @@ def main():
         print(f"   3. Ensure the token has OData API permissions")
         print(f"   4. Run device authentication again to get a fresh token")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

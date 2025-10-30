@@ -15,7 +15,6 @@ CACHE_TTL = {
     "resource_types": 86400,
     "systems": 86400,
     "compliance_config": 86400,
-
     # Relatively static data - 1 hour (default)
     "identities": 3600,
     "identity_by_email": 3600,
@@ -23,15 +22,12 @@ CACHE_TTL = {
     "resources": 3600,
     "roles": 3600,
     "contexts": 3600,
-
     # Moderately dynamic data - 15 minutes
     "calculated_assignments": 900,
     "access_requests": 900,
-
     # Dynamic data (minimal caching) - 5 minutes
     "pending_approvals": 300,
     "approval_details": 300,
-
     # Never cache (0 = no caching)
     "create_access_request": 0,
     "make_approval_decision": 0,

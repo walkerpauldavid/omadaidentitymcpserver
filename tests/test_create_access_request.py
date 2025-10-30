@@ -2,6 +2,7 @@ import asyncio
 import json
 from server import create_access_request
 
+
 async def test_create_access_request():
     """Test harness for the create_access_request function"""
 
@@ -16,8 +17,8 @@ async def test_create_access_request():
                 "impersonate_user": "berbla@54MV4C.ONMICROSOFT.COM",
                 "reason": "Test reason",
                 "context": "Business context for testing access request",
-                "resources": '{"id": "fa58b111-7e91-4723-b998-2df8c0758568"}'
-            }
+                "resources": '{"id": "fa58b111-7e91-4723-b998-2df8c0758568"}',
+            },
         }
     ]
 
@@ -27,77 +28,83 @@ async def test_create_access_request():
 
         try:
             # Call the function with test parameters
-            result = await create_access_request(**test_case['params'])
+            result = await create_access_request(**test_case["params"])
 
             # Parse and display the result
             parsed_result = json.loads(result)
-            status = parsed_result.get('status', 'unknown')
+            status = parsed_result.get("status", "unknown")
 
             print(f"Status: {status}")
 
             # Show full HTTP body and GraphQL details
             print("\n📋 FULL HTTP REQUEST/RESPONSE DETAILS:")
             print("=" * 50)
-            if 'endpoint' in parsed_result:
+            if "endpoint" in parsed_result:
                 print(f"GraphQL Endpoint: {parsed_result['endpoint']}")
 
             # Show HTTP debug information if available
-            if 'http_debug' in parsed_result:
-                http_debug = parsed_result['http_debug']
+            if "http_debug" in parsed_result:
+                http_debug = parsed_result["http_debug"]
 
                 print("\n🔍 RAW HTTP REQUEST BODY:")
-                if http_debug.get('raw_request_body'):
-                    print(http_debug['raw_request_body'])
+                if http_debug.get("raw_request_body"):
+                    print(http_debug["raw_request_body"])
                 else:
                     print("Not available")
 
                 print("\n🔍 RAW HTTP RESPONSE BODY:")
-                if http_debug.get('raw_response_body'):
-                    print(http_debug['raw_response_body'])
+                if http_debug.get("raw_response_body"):
+                    print(http_debug["raw_response_body"])
                 else:
                     print("Not available")
 
                 print("\n🔍 REQUEST HEADERS:")
-                if http_debug.get('request_headers'):
-                    for key, value in http_debug['request_headers'].items():
+                if http_debug.get("request_headers"):
+                    for key, value in http_debug["request_headers"].items():
                         print(f"  {key}: {value}")
                 else:
                     print("Not available")
 
             # Show GraphQL errors if present
-            if 'errors' in parsed_result:
+            if "errors" in parsed_result:
                 print("\n❌ GraphQL Errors:")
-                print(json.dumps(parsed_result['errors'], indent=2))
+                print(json.dumps(parsed_result["errors"], indent=2))
 
             # Show the complete parsed result for debugging
             print("\n📄 Complete Parsed Response:")
             print(json.dumps(parsed_result, indent=2))
             print("=" * 50)
 
-            if status == 'success':
+            if status == "success":
                 print(f"✅ SUCCESS")
-                print(f"   Access Request ID: {parsed_result.get('access_request_id', 'N/A')}")
+                print(
+                    f"   Access Request ID: {parsed_result.get('access_request_id', 'N/A')}"
+                )
                 print(f"   Message: {parsed_result.get('message', 'N/A')}")
-                print(f"   Impersonated User: {parsed_result.get('impersonated_user', 'N/A')}")
+                print(
+                    f"   Impersonated User: {parsed_result.get('impersonated_user', 'N/A')}"
+                )
 
-                request_details = parsed_result.get('request_details', {})
+                request_details = parsed_result.get("request_details", {})
                 if request_details:
                     print(f"   Request Details:")
                     print(f"     Reason: {request_details.get('reason', 'N/A')}")
-                    print(f"     Identity ID: {request_details.get('identity_id', 'N/A')}")
+                    print(
+                        f"     Identity ID: {request_details.get('identity_id', 'N/A')}"
+                    )
                     print(f"     Resources: {request_details.get('resources', 'N/A')}")
-                    if request_details.get('valid_from'):
+                    if request_details.get("valid_from"):
                         print(f"     Valid From: {request_details.get('valid_from')}")
-                    if request_details.get('valid_to'):
+                    if request_details.get("valid_to"):
                         print(f"     Valid To: {request_details.get('valid_to')}")
-                    if request_details.get('context'):
+                    if request_details.get("context"):
                         print(f"     Context: {request_details.get('context')}")
 
-            elif status == 'error':
-                error_type = parsed_result.get('error_type', 'Unknown')
-                message = parsed_result.get('message', 'No message provided')
+            elif status == "error":
+                error_type = parsed_result.get("error_type", "Unknown")
+                message = parsed_result.get("message", "No message provided")
 
-                if error_type == 'ValidationError':
+                if error_type == "ValidationError":
                     print(f"❌ VALIDATION ERROR (Expected)")
                 else:
                     print(f"❌ ERROR")
@@ -106,11 +113,11 @@ async def test_create_access_request():
                 print(f"   Message: {message}")
 
                 # Show additional error details if available
-                if 'errors' in parsed_result:
+                if "errors" in parsed_result:
                     print(f"   GraphQL Errors: {parsed_result['errors']}")
-                if 'response_body' in parsed_result:
+                if "response_body" in parsed_result:
                     print(f"   Response Body: {parsed_result['response_body']}")
-                if 'endpoint' in parsed_result:
+                if "endpoint" in parsed_result:
                     print(f"   Endpoint: {parsed_result['endpoint']}")
             else:
                 print(f"⚠️ UNEXPECTED STATUS: {status}")
@@ -121,6 +128,7 @@ async def test_create_access_request():
             print(f"   Error Type: {type(e).__name__}")
 
         print()
+
 
 async def interactive_test():
     """Interactive test function where you can input your own parameters"""
@@ -149,7 +157,7 @@ async def interactive_test():
             context=context,
             resources=resources,
             valid_from=valid_from,
-            valid_to=valid_to
+            valid_to=valid_to,
         )
 
         print("Result:")
@@ -158,36 +166,36 @@ async def interactive_test():
         # Show full HTTP body and GraphQL details
         print("\n📋 FULL HTTP REQUEST/RESPONSE DETAILS:")
         print("=" * 50)
-        if 'endpoint' in parsed_result:
+        if "endpoint" in parsed_result:
             print(f"GraphQL Endpoint: {parsed_result['endpoint']}")
 
         # Show HTTP debug information if available
-        if 'http_debug' in parsed_result:
-            http_debug = parsed_result['http_debug']
+        if "http_debug" in parsed_result:
+            http_debug = parsed_result["http_debug"]
 
             print("\n🔍 RAW HTTP REQUEST BODY:")
-            if http_debug.get('raw_request_body'):
-                print(http_debug['raw_request_body'])
+            if http_debug.get("raw_request_body"):
+                print(http_debug["raw_request_body"])
             else:
                 print("Not available")
 
             print("\n🔍 RAW HTTP RESPONSE BODY:")
-            if http_debug.get('raw_response_body'):
-                print(http_debug['raw_response_body'])
+            if http_debug.get("raw_response_body"):
+                print(http_debug["raw_response_body"])
             else:
                 print("Not available")
 
             print("\n🔍 REQUEST HEADERS:")
-            if http_debug.get('request_headers'):
-                for key, value in http_debug['request_headers'].items():
+            if http_debug.get("request_headers"):
+                for key, value in http_debug["request_headers"].items():
                     print(f"  {key}: {value}")
             else:
                 print("Not available")
 
         # Show GraphQL errors if present
-        if 'errors' in parsed_result:
+        if "errors" in parsed_result:
             print("\n❌ GraphQL Errors:")
-            print(json.dumps(parsed_result['errors'], indent=2))
+            print(json.dumps(parsed_result["errors"], indent=2))
 
         # Show the complete parsed result
         print("\n📄 Complete Parsed Response:")
@@ -196,6 +204,7 @@ async def interactive_test():
 
     except Exception as e:
         print(f"Error: {str(e)}")
+
 
 if __name__ == "__main__":
     print("Choose test mode:")

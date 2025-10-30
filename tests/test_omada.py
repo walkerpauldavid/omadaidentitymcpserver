@@ -16,24 +16,28 @@ try:
     from test_operators import test_firstname_not_equals, test_other_operators
 except ImportError:
     test_firstname_not_equals = test_other_operators = None
-    
+
 try:
-    from test_resourceassignments import (test_resourceassignments_count, test_resourceassignments_sample, 
-                                        test_resourceassignments_by_identity, test_resourceassignments_by_resource)
+    from test_resourceassignments import (
+        test_resourceassignments_count,
+        test_resourceassignments_sample,
+        test_resourceassignments_by_identity,
+        test_resourceassignments_by_resource,
+    )
 except ImportError:
     test_resourceassignments_count = test_resourceassignments_sample = None
     test_resourceassignments_by_identity = test_resourceassignments_by_resource = None
-    
+
 try:
     from test_system import test_system_count, test_system_sample, test_system_by_name
 except ImportError:
     test_system_count = test_system_sample = test_system_by_name = None
-    
+
 try:
     from test_calculated_assignments import main as test_calculated_assignments_main
 except ImportError:
     test_calculated_assignments_main = None
-    
+
 try:
     from test_errors import main as test_errors_main
 except ImportError:
@@ -42,12 +46,16 @@ except ImportError:
 # Global variable to control output
 show_output = True
 
+
 def show_usage():
     """Display usage information and key features."""
-    print("""
-=== TEST OMADA - USAGE AND KEY FEATURES ===""")
-    print("="*60)
-    print("""
+    print(
+        """
+=== TEST OMADA - USAGE AND KEY FEATURES ==="""
+    )
+    print("=" * 60)
+    print(
+        """
 Key Features:
 
 1. Import statements with error handling for:
@@ -96,7 +104,9 @@ Usage examples:
 
 The script gracefully handles missing test files and will skip test suites 
 that aren't available, showing appropriate messages.
-""")
+"""
+    )
+
 
 def print_result(test_name: str, result: str):
     """Print test result based on showOutput setting."""
@@ -120,6 +130,7 @@ def print_result(test_name: str, result: str):
             else:
                 print(f"{test_name}: [FAILED] Failed")
 
+
 def print_count_result(test_name: str, result: str, object_type: str):
     """Print count result with object count and type information."""
     try:
@@ -127,7 +138,9 @@ def print_count_result(test_name: str, result: str, object_type: str):
             parsed = json.loads(result)
             if parsed.get("status") == "success":
                 count = parsed.get("count", 0)
-                print(f"{test_name}: [SUCCESS] Success - Found {count} {object_type} objects")
+                print(
+                    f"{test_name}: [SUCCESS] Success - Found {count} {object_type} objects"
+                )
                 if show_output:
                     print(f"{test_name} Full Result:", result)
             else:
@@ -143,11 +156,12 @@ def print_count_result(test_name: str, result: str, object_type: str):
         else:
             print(f"{test_name}: [FAILED] Failed")
 
+
 def print_identity_result(test_name: str, result: str, show_fields=None):
     """Print identity result showing specified fields."""
     if show_fields is None:
-        show_fields = ['Id', 'FIRSTNAME', 'LASTNAME']
-        
+        show_fields = ["Id", "FIRSTNAME", "LASTNAME"]
+
     if show_output:
         print(f"{test_name} Result:", result)
     else:
@@ -156,25 +170,33 @@ def print_identity_result(test_name: str, result: str, show_fields=None):
                 parsed = json.loads(result)
                 if parsed.get("status") == "success":
                     print(f"{test_name}: [SUCCESS] Success (HTTP 200)")
-                    
+
                     # Show identity details if available
-                    if 'data' in parsed and 'value' in parsed['data'] and parsed['data']['value']:
+                    if (
+                        "data" in parsed
+                        and "value" in parsed["data"]
+                        and parsed["data"]["value"]
+                    ):
                         print(f"  Found {len(parsed['data']['value'])} identities:")
-                        for i, item in enumerate(parsed['data']['value'][:3], 1):  # Show first 3
+                        for i, item in enumerate(
+                            parsed["data"]["value"][:3], 1
+                        ):  # Show first 3
                             result_line = f"    {i}."
                             for field in show_fields:
-                                value = item.get(field, 'N/A')
-                                if field == 'Id':
+                                value = item.get(field, "N/A")
+                                if field == "Id":
                                     result_line += f" ID: {value}"
-                                elif field == 'FIRSTNAME':
+                                elif field == "FIRSTNAME":
                                     result_line += f", FirstName: {value}"
-                                elif field == 'LASTNAME':
+                                elif field == "LASTNAME":
                                     result_line += f", LastName: {value}"
-                                elif field == 'DISPLAYNAME':
+                                elif field == "DISPLAYNAME":
                                     result_line += f", DisplayName: {value}"
                             print(result_line)
-                        if len(parsed['data']['value']) > 3:
-                            print(f"    ... and {len(parsed['data']['value']) - 3} more")
+                        if len(parsed["data"]["value"]) > 3:
+                            print(
+                                f"    ... and {len(parsed['data']['value']) - 3} more"
+                            )
                 else:
                     print(f"{test_name}: [FAILED] Failed")
             else:
@@ -185,89 +207,90 @@ def print_identity_result(test_name: str, result: str, show_fields=None):
             else:
                 print(f"{test_name}: [FAILED] Failed")
 
+
 async def test_identity_query():
-    print("=== TESTING IDENTITY QUERIES ===""")
+    print("=== TESTING IDENTITY QUERIES ===" "")
     global _cached_token
     # Clear cached token to ensure fresh request
     _cached_token = None
-    
+
     try:
         result = await query_omada_identity(
-            firstname="Emma", 
-            lastname="Taylor", 
+            firstname="Emma",
+            lastname="Taylor",
             omada_base_url=os.getenv("OMADA_BASE_URL"),
-            select_fields="Id,FIRSTNAME,LASTNAME"
+            select_fields="Id,FIRSTNAME,LASTNAME",
         )
-        print_identity_result("Identity Query", result, ['Id', 'FIRSTNAME', 'LASTNAME'])
+        print_identity_result("Identity Query", result, ["Id", "FIRSTNAME", "LASTNAME"])
     except Exception as e:
         print(f"Identity Query Error: {str(e)}")
         print("Identity Query: [FAILED] Failed")
 
+
 async def test_count_application_roles():
-    print("\n=== TESTING APPLICATION ROLES COUNT ===""")
+    print("\n=== TESTING APPLICATION ROLES COUNT ===" "")
     try:
         result = await query_omada_resources(
-            resource_type_name="APPLICATION_ROLES",
-            count_only=True
+            resource_type_name="APPLICATION_ROLES", count_only=True
         )
         print_count_result("Application Roles Count", result, "Application Role")
     except Exception as e:
         print(f"Application Roles Count Error: {str(e)}")
         print("Application Roles Count: [FAILED] Failed")
 
+
 async def test_get_all_application_roles():
-    print("\n=== TESTING GET ALL APPLICATION ROLES ===""")
+    print("\n=== TESTING GET ALL APPLICATION ROLES ===" "")
     try:
         result = await query_omada_resources(
             resource_type_name="APPLICATION_ROLES",
             top=10,
             include_count=True,
-            select_fields="Id,DISPLAYNAME"
+            select_fields="Id,DISPLAYNAME",
         )
         print_result("Get All Application Roles", result)
     except Exception as e:
         print(f"Get All Application Roles Error: {str(e)}")
         print("Get All Application Roles: [FAILED] Failed")
 
+
 async def test_get_application_roles_by_name():
-    print("\n=== TESTING APPLICATION ROLES FILTERED BY NAME ===""")
+    print("\n=== TESTING APPLICATION ROLES FILTERED BY NAME ===" "")
     try:
         result = await query_omada_resources(
             resource_type_name="APPLICATION_ROLES",
             filter_condition="contains(DISPLAYNAME, 'Admin')",
             top=5,
-            select_fields="Id,DISPLAYNAME"
+            select_fields="Id,DISPLAYNAME",
         )
         print_result("Get Application Roles by Name", result)
     except Exception as e:
         print(f"Get Application Roles by Name Error: {str(e)}")
         print("Get Application Roles by Name: [FAILED] Failed")
 
+
 async def test_application_roles_with_id():
-    print("\n=== TESTING APPLICATION ROLES WITH NUMERIC ID ===""")
+    print("\n=== TESTING APPLICATION ROLES WITH NUMERIC ID ===" "")
     try:
         result = await query_omada_resources(
-            resource_type_id=1011066,
-            top=5,
-            select_fields="Id,DISPLAYNAME"
+            resource_type_id=1011066, top=5, select_fields="Id,DISPLAYNAME"
         )
         print_result("Get Application Roles with ID", result)
     except Exception as e:
         print(f"Get Application Roles with ID Error: {str(e)}")
         print("Get Application Roles with ID: [FAILED] Failed")
 
+
 async def test_count_all_identities():
     """Count all identities in Omada system"""
     print("\n=== TESTING COUNT ALL IDENTITIES ===")
     try:
-        result = await query_omada_identity(
-            count_only=True,
-            include_count=True
-        )
+        result = await query_omada_identity(count_only=True, include_count=True)
         print_count_result("Count All Identities", result, "Identity")
     except Exception as e:
         print(f"Count All Identities Error: {str(e)}")
         print("Count All Identities: [FAILED] Failed")
+
 
 async def run_operators_tests():
     """Run operator tests if available"""
@@ -283,6 +306,7 @@ async def run_operators_tests():
             print("Operator Tests: [FAILED] Failed")
     else:
         print("\nOperator tests not available (test_operators.py not found)")
+
 
 async def run_resourceassignments_tests():
     """Run resource assignment tests if available"""
@@ -302,7 +326,10 @@ async def run_resourceassignments_tests():
             print(f"Resource Assignment Tests Error: {str(e)}")
             print("Resource Assignment Tests: [FAILED] Failed")
     else:
-        print("\nResource assignment tests not available (test_resourceassignments.py not found)")
+        print(
+            "\nResource assignment tests not available (test_resourceassignments.py not found)"
+        )
+
 
 async def run_system_tests():
     """Run system tests if available"""
@@ -322,19 +349,21 @@ async def run_system_tests():
     else:
         print("\nSystem tests not available (test_system.py not found)")
 
+
 async def test_identity_calculated_assignments(identity_id: int):
     """Test calculated assignments for a specific identity ID."""
     print(f"\n=== TESTING CALCULATED ASSIGNMENTS FOR IDENTITY {identity_id} ===")
     try:
         from server import query_calculated_assignments
+
         result = await query_calculated_assignments(
             identity_id=identity_id,
             select_fields="AssignmentKey,AccountName,Reasons",
             expand="Identity,Resource,ResourceType",
             top=20,
-            include_count=True
+            include_count=True,
         )
-        
+
         # Custom display for calculated assignments with reasons
         if show_output:
             print(f"Calculated Assignments Result:", result)
@@ -343,32 +372,38 @@ async def test_identity_calculated_assignments(identity_id: int):
                 parsed = json.loads(result)
                 if parsed.get("status") == "success":
                     count = parsed.get("entities_returned", 0)
-                    print(f"Calculated Assignments: [SUCCESS] Success - Found {count} assignments")
-                    
-                    if 'data' in parsed and 'value' in parsed['data']:
-                        for i, assignment in enumerate(parsed['data']['value'], 1):
-                            assignment_key = assignment.get('AssignmentKey', 'N/A')
-                            account_name = assignment.get('AccountName', 'N/A')
-                            
+                    print(
+                        f"Calculated Assignments: [SUCCESS] Success - Found {count} assignments"
+                    )
+
+                    if "data" in parsed and "value" in parsed["data"]:
+                        for i, assignment in enumerate(parsed["data"]["value"], 1):
+                            assignment_key = assignment.get("AssignmentKey", "N/A")
+                            account_name = assignment.get("AccountName", "N/A")
+
                             # Get identity info
-                            identity_info = assignment.get('Identity', {})
-                            identity_name = identity_info.get('DisplayName', 'N/A')
-                            
-                            # Get resource info  
-                            resource_info = assignment.get('Resource', {})
-                            resource_name = resource_info.get('DisplayName', 'N/A')
-                            
+                            identity_info = assignment.get("Identity", {})
+                            identity_name = identity_info.get("DisplayName", "N/A")
+
+                            # Get resource info
+                            resource_info = assignment.get("Resource", {})
+                            resource_name = resource_info.get("DisplayName", "N/A")
+
                             # Get resource type info
-                            resource_type_info = assignment.get('ResourceType', {})
-                            resource_type_name = resource_type_info.get('DisplayName', 'N/A')
-                            
+                            resource_type_info = assignment.get("ResourceType", {})
+                            resource_type_name = resource_type_info.get(
+                                "DisplayName", "N/A"
+                            )
+
                             # Get reasons
-                            reasons = assignment.get('Reasons', [])
+                            reasons = assignment.get("Reasons", [])
                             reason_text = "No reasons specified"
                             if reasons:
-                                reason_descriptions = [r.get('Description', 'Unknown') for r in reasons]
+                                reason_descriptions = [
+                                    r.get("Description", "Unknown") for r in reasons
+                                ]
                                 reason_text = " | ".join(reason_descriptions)
-                            
+
                             print(f"  {i}. Assignment: {assignment_key}")
                             print(f"     Identity: {identity_name} (ID: {identity_id})")
                             print(f"     Account: {account_name}")
@@ -379,11 +414,14 @@ async def test_identity_calculated_assignments(identity_id: int):
                 else:
                     print(f"Calculated Assignments: [FAILED] Failed")
             except (json.JSONDecodeError, AttributeError) as e:
-                print(f"Calculated Assignments: [FAILED] Failed - Parse error: {str(e)}")
-                
+                print(
+                    f"Calculated Assignments: [FAILED] Failed - Parse error: {str(e)}"
+                )
+
     except Exception as e:
         print(f"Calculated Assignments Error: {str(e)}")
         print("Calculated Assignments: [FAILED] Failed")
+
 
 async def run_calculated_assignments_tests(identity_id=None):
     """Run calculated assignments tests if available"""
@@ -399,7 +437,10 @@ async def run_calculated_assignments_tests(identity_id=None):
             print(f"Calculated Assignments Tests Error: {str(e)}")
             print("Calculated Assignments Tests: [FAILED] Failed")
     else:
-        print("\nCalculated assignments tests not available (test_calculated_assignments.py not found)")
+        print(
+            "\nCalculated assignments tests not available (test_calculated_assignments.py not found)"
+        )
+
 
 async def run_errors_tests():
     """Run error handling tests if available"""
@@ -415,6 +456,7 @@ async def run_errors_tests():
     else:
         print("\nError handling tests not available (test_errors.py not found)")
 
+
 async def main():
     print("=" * 60)
     print("RUNNING CORE OMADA TESTS")
@@ -425,36 +467,58 @@ async def main():
     await test_get_all_application_roles()
     await test_get_application_roles_by_name()
     await test_application_roles_with_id()
-    
+
     # Run additional test suites
     await run_operators_tests()
     await run_resourceassignments_tests()
     await run_system_tests()
     await run_calculated_assignments_tests()
     await run_errors_tests()
-    
+
     print("\n" + "=" * 60)
     print("ALL TESTS COMPLETED")
     print("=" * 60)
 
+
 if __name__ == "__main__":
     # Check for usage parameter first
-    if len(sys.argv) > 1 and sys.argv[1] == 'usage':
+    if len(sys.argv) > 1 and sys.argv[1] == "usage":
         show_usage()
         sys.exit(0)
-    
-    parser = argparse.ArgumentParser(description='Test Omada API endpoints')
-    parser.add_argument('--showOutput', action='store_true', default=False,
-                       help='Show full JSON output (default: False, shows only status)')
-    parser.add_argument('--testsuite', choices=['all', 'core', 'operators', 'resourceassignments', 'system', 'calculated', 'errors'],
-                       default='all', help='Select which test suite to run (default: all)')
-    parser.add_argument('--identity-id', type=int, help='Identity ID for calculated assignments (required for --testsuite calculated)')
-    
+
+    parser = argparse.ArgumentParser(description="Test Omada API endpoints")
+    parser.add_argument(
+        "--showOutput",
+        action="store_true",
+        default=False,
+        help="Show full JSON output (default: False, shows only status)",
+    )
+    parser.add_argument(
+        "--testsuite",
+        choices=[
+            "all",
+            "core",
+            "operators",
+            "resourceassignments",
+            "system",
+            "calculated",
+            "errors",
+        ],
+        default="all",
+        help="Select which test suite to run (default: all)",
+    )
+    parser.add_argument(
+        "--identity-id",
+        type=int,
+        help="Identity ID for calculated assignments (required for --testsuite calculated)",
+    )
+
     args = parser.parse_args()
     show_output = args.showOutput
-    
+
     # Run specific test suite based on argument
-    if args.testsuite == 'core':
+    if args.testsuite == "core":
+
         async def run_core_only():
             print("=" * 60)
             print("RUNNING CORE OMADA TESTS ONLY")
@@ -465,19 +529,22 @@ if __name__ == "__main__":
             await test_get_all_application_roles()
             await test_get_application_roles_by_name()
             await test_application_roles_with_id()
+
         asyncio.run(run_core_only())
-    elif args.testsuite == 'operators':
+    elif args.testsuite == "operators":
         asyncio.run(run_operators_tests())
-    elif args.testsuite == 'resourceassignments':
+    elif args.testsuite == "resourceassignments":
         asyncio.run(run_resourceassignments_tests())
-    elif args.testsuite == 'system':
+    elif args.testsuite == "system":
         asyncio.run(run_system_tests())
-    elif args.testsuite == 'calculated':
+    elif args.testsuite == "calculated":
         if not args.identity_id:
-            print("Error: --identity-id parameter is required when using --testsuite calculated")
+            print(
+                "Error: --identity-id parameter is required when using --testsuite calculated"
+            )
             sys.exit(1)
         asyncio.run(run_calculated_assignments_tests(args.identity_id))
-    elif args.testsuite == 'errors':
+    elif args.testsuite == "errors":
         asyncio.run(run_errors_tests())
     else:  # 'all' or default
         asyncio.run(main())

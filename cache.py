@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 class OmadaCache:
     """SQLite-based cache for Omada API responses with TTL support."""
 
-    def __init__(self, db_path: str = None, default_ttl: int = 3600, auto_cleanup: bool = True):
+    def __init__(
+        self, db_path: str = None, default_ttl: int = 3600, auto_cleanup: bool = True
+    ):
         """
         Initialize the cache.
 
@@ -48,9 +50,13 @@ class OmadaCache:
         # Start automatic cleanup if enabled
         if self.auto_cleanup:
             self.start_auto_cleanup()
-            logger.info(f"Cache initialized at: {self.db_path} (default TTL: {default_ttl}s, auto-cleanup: ENABLED)")
+            logger.info(
+                f"Cache initialized at: {self.db_path} (default TTL: {default_ttl}s, auto-cleanup: ENABLED)"
+            )
         else:
-            logger.info(f"Cache initialized at: {self.db_path} (default TTL: {default_ttl}s, auto-cleanup: DISABLED)")
+            logger.info(
+                f"Cache initialized at: {self.db_path} (default TTL: {default_ttl}s, auto-cleanup: DISABLED)"
+            )
 
     def _init_db(self):
         """Initialize cache database with tables."""
@@ -58,7 +64,8 @@ class OmadaCache:
         cursor = conn.cursor()
 
         # Main cache table with TTL
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS api_cache (
                 cache_key TEXT PRIMARY KEY,
                 endpoint TEXT NOT NULL,
@@ -69,10 +76,12 @@ class OmadaCache:
                 hit_count INTEGER DEFAULT 0,
                 last_accessed TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Identity lookup table (optimized for email/UId lookups)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS identity_cache (
                 uid TEXT PRIMARY KEY,
                 email TEXT UNIQUE,
@@ -85,10 +94,12 @@ class OmadaCache:
                 expires_at TIMESTAMP NOT NULL,
                 hit_count INTEGER DEFAULT 0
             )
-        """)
+        """
+        )
 
         # Resource type cache (very static)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS resource_type_cache (
                 resource_type_id INTEGER PRIMARY KEY,
                 resource_type_name TEXT,
@@ -98,12 +109,15 @@ class OmadaCache:
                 expires_at TIMESTAMP NOT NULL,
                 hit_count INTEGER DEFAULT 0
             )
-        """)
+        """
+        )
 
         # Indexes for performance
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_email ON identity_cache(email)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_endpoint ON api_cache(endpoint)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_expires ON api_cache(expires_at)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_expires ON api_cache(expires_at)"
+        )
 
         conn.commit()
         conn.close()
@@ -128,21 +142,27 @@ class OmadaCache:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT response_data, expires_at, created_at
             FROM api_cache
             WHERE cache_key = ? AND expires_at > ?
-        """, (cache_key, datetime.now()))
+        """,
+            (cache_key, datetime.now()),
+        )
 
         row = cursor.fetchone()
 
         if row:
             # Update hit count and last accessed
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE api_cache
                 SET hit_count = hit_count + 1, last_accessed = ?
                 WHERE cache_key = ?
-            """, (datetime.now(), cache_key))
+            """,
+                (datetime.now(), cache_key),
+            )
             conn.commit()
 
             response_data = json.loads(row[0])
@@ -150,7 +170,9 @@ class OmadaCache:
             age_seconds = (datetime.now() - created_at).total_seconds()
 
             logger.info(f"🎯 CACHE HIT for {endpoint} (age: {age_seconds:.1f}s)")
-            logger.debug(f"DEBUG: Cache HIT - endpoint={endpoint}, cache_key={cache_key[:16]}..., age={age_seconds:.1f}s, created={created_at.isoformat()}")
+            logger.debug(
+                f"DEBUG: Cache HIT - endpoint={endpoint}, cache_key={cache_key[:16]}..., age={age_seconds:.1f}s, created={created_at.isoformat()}"
+            )
             conn.close()
 
             # Add cache metadata to response
@@ -158,18 +180,25 @@ class OmadaCache:
                 "cached": True,
                 "cache_hit": True,
                 "created_at": created_at.isoformat(),
-                "age_seconds": age_seconds
+                "age_seconds": age_seconds,
             }
 
             return response_data
 
         logger.info(f"❌ CACHE MISS for {endpoint} - fetching from API")
-        logger.debug(f"DEBUG: Cache MISS - endpoint={endpoint}, cache_key={cache_key[:16]}..., reason=not_found_or_expired")
+        logger.debug(
+            f"DEBUG: Cache MISS - endpoint={endpoint}, cache_key={cache_key[:16]}..., reason=not_found_or_expired"
+        )
         conn.close()
         return None
 
-    def set(self, endpoint: str, params: Dict[str, Any],
-            response: Dict[str, Any], ttl_seconds: int = None):
+    def set(
+        self,
+        endpoint: str,
+        params: Dict[str, Any],
+        response: Dict[str, Any],
+        ttl_seconds: int = None,
+    ):
         """
         Store response in cache with TTL.
 
@@ -193,25 +222,32 @@ class OmadaCache:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO api_cache
             (cache_key, endpoint, query_params, response_data, created_at, expires_at, hit_count, last_accessed)
             VALUES (?, ?, ?, ?, ?, ?, 0, ?)
-        """, (
-            cache_key,
-            endpoint,
-            json.dumps(params, sort_keys=True),
-            json.dumps(response_copy),
-            now,
-            expires_at,
-            now
-        ))
+        """,
+            (
+                cache_key,
+                endpoint,
+                json.dumps(params, sort_keys=True),
+                json.dumps(response_copy),
+                now,
+                expires_at,
+                now,
+            ),
+        )
 
         conn.commit()
         conn.close()
 
-        logger.info(f"💾 CACHE STORED for {endpoint} (TTL: {ttl_seconds}s, expires: {expires_at.strftime('%H:%M:%S')})")
-        logger.debug(f"DEBUG: Cache STORED - endpoint={endpoint}, cache_key={cache_key[:16]}..., ttl={ttl_seconds}s, expires={expires_at.isoformat()}")
+        logger.info(
+            f"💾 CACHE STORED for {endpoint} (TTL: {ttl_seconds}s, expires: {expires_at.strftime('%H:%M:%S')})"
+        )
+        logger.debug(
+            f"DEBUG: Cache STORED - endpoint={endpoint}, cache_key={cache_key[:16]}..., ttl={ttl_seconds}s, expires={expires_at.isoformat()}"
+        )
 
     def cache_identity(self, identity_data: Dict[str, Any], ttl_seconds: int = None):
         """
@@ -230,29 +266,34 @@ class OmadaCache:
         now = datetime.now()
         expires_at = now + timedelta(seconds=ttl_seconds)
 
-        uid = identity_data.get('UId')
-        email = identity_data.get('EMAIL')
+        uid = identity_data.get("UId")
+        email = identity_data.get("EMAIL")
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT OR REPLACE INTO identity_cache
             (uid, email, identity_id, display_name, first_name, last_name, full_data, created_at, expires_at, hit_count)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        """, (
-            uid,
-            email,
-            identity_data.get('IDENTITYID'),
-            identity_data.get('DISPLAYNAME'),
-            identity_data.get('FIRSTNAME'),
-            identity_data.get('LASTNAME'),
-            json.dumps(identity_data),
-            now,
-            expires_at
-        ))
+        """,
+            (
+                uid,
+                email,
+                identity_data.get("IDENTITYID"),
+                identity_data.get("DISPLAYNAME"),
+                identity_data.get("FIRSTNAME"),
+                identity_data.get("LASTNAME"),
+                json.dumps(identity_data),
+                now,
+                expires_at,
+            ),
+        )
 
         conn.commit()
         conn.close()
 
-        logger.info(f"💾 IDENTITY CACHED: {email} (UId: {uid[:8]}..., TTL: {ttl_seconds}s)")
+        logger.info(
+            f"💾 IDENTITY CACHED: {email} (UId: {uid[:8]}..., TTL: {ttl_seconds}s)"
+        )
 
     def get_identity_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """
@@ -267,28 +308,36 @@ class OmadaCache:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT full_data, created_at
             FROM identity_cache
             WHERE email = ? AND expires_at > ?
-        """, (email, datetime.now()))
+        """,
+            (email, datetime.now()),
+        )
 
         row = cursor.fetchone()
 
         if row:
             # Update hit count
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE identity_cache
                 SET hit_count = hit_count + 1
                 WHERE email = ?
-            """, (email,))
+            """,
+                (email,),
+            )
             conn.commit()
 
             identity_data = json.loads(row[0])
             created_at = datetime.fromisoformat(row[1])
             age_seconds = (datetime.now() - created_at).total_seconds()
 
-            logger.info(f"🎯 IDENTITY CACHE HIT for email: {email} (age: {age_seconds:.1f}s)")
+            logger.info(
+                f"🎯 IDENTITY CACHE HIT for email: {email} (age: {age_seconds:.1f}s)"
+            )
             conn.close()
 
             # Add cache metadata
@@ -296,7 +345,7 @@ class OmadaCache:
                 "cached": True,
                 "cache_hit": True,
                 "created_at": created_at.isoformat(),
-                "age_seconds": age_seconds
+                "age_seconds": age_seconds,
             }
 
             return identity_data
@@ -318,28 +367,36 @@ class OmadaCache:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT full_data, created_at
             FROM identity_cache
             WHERE uid = ? AND expires_at > ?
-        """, (uid, datetime.now()))
+        """,
+            (uid, datetime.now()),
+        )
 
         row = cursor.fetchone()
 
         if row:
             # Update hit count
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE identity_cache
                 SET hit_count = hit_count + 1
                 WHERE uid = ?
-            """, (uid,))
+            """,
+                (uid,),
+            )
             conn.commit()
 
             identity_data = json.loads(row[0])
             created_at = datetime.fromisoformat(row[1])
             age_seconds = (datetime.now() - created_at).total_seconds()
 
-            logger.info(f"🎯 IDENTITY CACHE HIT for UId: {uid[:8]}... (age: {age_seconds:.1f}s)")
+            logger.info(
+                f"🎯 IDENTITY CACHE HIT for UId: {uid[:8]}... (age: {age_seconds:.1f}s)"
+            )
             conn.close()
 
             # Add cache metadata
@@ -347,7 +404,7 @@ class OmadaCache:
                 "cached": True,
                 "cache_hit": True,
                 "created_at": created_at.isoformat(),
-                "age_seconds": age_seconds
+                "age_seconds": age_seconds,
             }
 
             return identity_data
@@ -374,7 +431,9 @@ class OmadaCache:
             cache_key = self._generate_cache_key(endpoint, params)
             cursor.execute("DELETE FROM api_cache WHERE cache_key = ?", (cache_key,))
             deleted = cursor.rowcount
-            logger.info(f"🗑️ CACHE INVALIDATED: {endpoint} (specific params) - {deleted} entries deleted")
+            logger.info(
+                f"🗑️ CACHE INVALIDATED: {endpoint} (specific params) - {deleted} entries deleted"
+            )
         elif endpoint:
             cursor.execute("DELETE FROM api_cache WHERE endpoint = ?", (endpoint,))
             deleted = cursor.rowcount
@@ -435,7 +494,8 @@ class OmadaCache:
         cursor = conn.cursor()
 
         # API cache stats
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 COUNT(*) as total_entries,
                 COUNT(CASE WHEN expires_at > ? THEN 1 END) as valid_entries,
@@ -443,29 +503,36 @@ class OmadaCache:
                 SUM(hit_count) as total_hits,
                 AVG(hit_count) as avg_hits_per_entry
             FROM api_cache
-        """, (datetime.now(), datetime.now()))
+        """,
+            (datetime.now(), datetime.now()),
+        )
 
         api_stats = cursor.fetchone()
 
         # Identity cache stats
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 COUNT(*) as total,
                 COUNT(CASE WHEN expires_at > ? THEN 1 END) as valid,
                 SUM(hit_count) as total_hits
             FROM identity_cache
-        """, (datetime.now(),))
+        """,
+            (datetime.now(),),
+        )
 
         identity_stats = cursor.fetchone()
 
         # Most accessed endpoints
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT endpoint, SUM(hit_count) as hits
             FROM api_cache
             GROUP BY endpoint
             ORDER BY hits DESC
             LIMIT 5
-        """)
+        """
+        )
 
         top_endpoints = cursor.fetchall()
 
@@ -477,21 +544,23 @@ class OmadaCache:
                 "valid_entries": api_stats[1],
                 "expired_entries": api_stats[2],
                 "total_hits": api_stats[3] or 0,
-                "avg_hits_per_entry": round(api_stats[4], 2) if api_stats[4] else 0
+                "avg_hits_per_entry": round(api_stats[4], 2) if api_stats[4] else 0,
             },
             "identity_cache": {
                 "total_entries": identity_stats[0],
                 "valid_entries": identity_stats[1],
-                "total_hits": identity_stats[2] or 0
+                "total_hits": identity_stats[2] or 0,
             },
             "top_endpoints": [
                 {"endpoint": ep, "hits": hits} for ep, hits in top_endpoints
             ],
             "cache_file": self.db_path,
-            "default_ttl_seconds": self.default_ttl
+            "default_ttl_seconds": self.default_ttl,
         }
 
-    def view_cache_contents(self, limit: int = 50, include_expired: bool = False) -> Dict[str, Any]:
+    def view_cache_contents(
+        self, limit: int = 50, include_expired: bool = False
+    ) -> Dict[str, Any]:
         """
         View the actual contents of the cache.
 
@@ -511,7 +580,8 @@ class OmadaCache:
         params = [] if include_expired else [now]
 
         # Get API cache entries
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT
                 endpoint,
                 query_params,
@@ -524,11 +594,21 @@ class OmadaCache:
             {where_clause}
             ORDER BY created_at DESC
             LIMIT ?
-        """, [now] + params + [limit])
+        """,
+            [now] + params + [limit],
+        )
 
         api_entries = []
         for row in cursor.fetchall():
-            endpoint, query_params, created_at, expires_at, hit_count, last_accessed, status = row
+            (
+                endpoint,
+                query_params,
+                created_at,
+                expires_at,
+                hit_count,
+                last_accessed,
+                status,
+            ) = row
             created_dt = datetime.fromisoformat(created_at)
             expires_dt = datetime.fromisoformat(expires_at)
             age_seconds = (now - created_dt).total_seconds()
@@ -538,24 +618,31 @@ class OmadaCache:
             try:
                 params_dict = json.loads(query_params)
                 # Truncate long params for readability
-                params_summary = str(params_dict)[:100] + "..." if len(str(params_dict)) > 100 else str(params_dict)
+                params_summary = (
+                    str(params_dict)[:100] + "..."
+                    if len(str(params_dict)) > 100
+                    else str(params_dict)
+                )
             except:
                 params_summary = query_params[:100]
 
-            api_entries.append({
-                "endpoint": endpoint,
-                "params_summary": params_summary,
-                "status": status,
-                "created_at": created_at,
-                "expires_at": expires_at,
-                "age_seconds": round(age_seconds, 1),
-                "ttl_remaining_seconds": round(ttl_remaining, 1),
-                "hit_count": hit_count,
-                "last_accessed": last_accessed
-            })
+            api_entries.append(
+                {
+                    "endpoint": endpoint,
+                    "params_summary": params_summary,
+                    "status": status,
+                    "created_at": created_at,
+                    "expires_at": expires_at,
+                    "age_seconds": round(age_seconds, 1),
+                    "ttl_remaining_seconds": round(ttl_remaining, 1),
+                    "hit_count": hit_count,
+                    "last_accessed": last_accessed,
+                }
+            )
 
         # Get identity cache entries
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT
                 email,
                 display_name,
@@ -568,42 +655,56 @@ class OmadaCache:
             {where_clause}
             ORDER BY created_at DESC
             LIMIT ?
-        """, [now] + params + [limit])
+        """,
+            [now] + params + [limit],
+        )
 
         identity_entries = []
         for row in cursor.fetchall():
-            email, display_name, identity_id, created_at, expires_at, hit_count, status = row
+            (
+                email,
+                display_name,
+                identity_id,
+                created_at,
+                expires_at,
+                hit_count,
+                status,
+            ) = row
             created_dt = datetime.fromisoformat(created_at)
             expires_dt = datetime.fromisoformat(expires_at)
             age_seconds = (now - created_dt).total_seconds()
             ttl_remaining = (expires_dt - now).total_seconds()
 
-            identity_entries.append({
-                "email": email,
-                "display_name": display_name,
-                "identity_id": identity_id,
-                "status": status,
-                "created_at": created_at,
-                "expires_at": expires_at,
-                "age_seconds": round(age_seconds, 1),
-                "ttl_remaining_seconds": round(ttl_remaining, 1),
-                "hit_count": hit_count
-            })
+            identity_entries.append(
+                {
+                    "email": email,
+                    "display_name": display_name,
+                    "identity_id": identity_id,
+                    "status": status,
+                    "created_at": created_at,
+                    "expires_at": expires_at,
+                    "age_seconds": round(age_seconds, 1),
+                    "ttl_remaining_seconds": round(ttl_remaining, 1),
+                    "hit_count": hit_count,
+                }
+            )
 
         conn.close()
 
-        logger.info(f"📋 Cache contents viewed - {len(api_entries)} API entries, {len(identity_entries)} identity entries")
+        logger.info(
+            f"📋 Cache contents viewed - {len(api_entries)} API entries, {len(identity_entries)} identity entries"
+        )
 
         return {
             "api_cache_entries": api_entries,
             "identity_cache_entries": identity_entries,
             "total_shown": {
                 "api_cache": len(api_entries),
-                "identity_cache": len(identity_entries)
+                "identity_cache": len(identity_entries),
             },
             "limit": limit,
             "include_expired": include_expired,
-            "timestamp": now.isoformat()
+            "timestamp": now.isoformat(),
         }
 
     def get_cache_efficiency(self) -> Dict[str, Any]:
@@ -618,7 +719,8 @@ class OmadaCache:
         now = datetime.now()
 
         # Get API cache efficiency metrics
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 COUNT(*) as total_entries,
                 COUNT(CASE WHEN expires_at > ? THEN 1 END) as valid_entries,
@@ -628,13 +730,24 @@ class OmadaCache:
                 MAX(hit_count) as max_hits,
                 AVG(hit_count) as avg_hits
             FROM api_cache
-        """, (now, now))
+        """,
+            (now, now),
+        )
 
         api_metrics = cursor.fetchone()
-        total_entries, valid_entries, total_hits, unused_entries, utilized_entries, max_hits, avg_hits = api_metrics
+        (
+            total_entries,
+            valid_entries,
+            total_hits,
+            unused_entries,
+            utilized_entries,
+            max_hits,
+            avg_hits,
+        ) = api_metrics
 
         # Get identity cache efficiency
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 COUNT(*) as total_entries,
                 COUNT(CASE WHEN expires_at > ? THEN 1 END) as valid_entries,
@@ -643,10 +756,14 @@ class OmadaCache:
                 MAX(hit_count) as max_hits,
                 AVG(hit_count) as avg_hits
             FROM identity_cache
-        """, (now,))
+        """,
+            (now,),
+        )
 
         identity_metrics = cursor.fetchone()
-        id_total, id_valid, id_hits, id_unused, id_max_hits, id_avg_hits = identity_metrics
+        id_total, id_valid, id_hits, id_unused, id_max_hits, id_avg_hits = (
+            identity_metrics
+        )
 
         # Calculate total requests (hits + misses)
         # Note: We can't track misses directly, but we can estimate based on entries with 0 hits
@@ -654,50 +771,73 @@ class OmadaCache:
         total_identity_requests = (id_hits or 0) + (id_unused or 0)
 
         # Calculate hit rates
-        api_hit_rate = (total_hits / total_api_requests * 100) if total_api_requests > 0 else 0
-        identity_hit_rate = (id_hits / total_identity_requests * 100) if total_identity_requests > 0 else 0
+        api_hit_rate = (
+            (total_hits / total_api_requests * 100) if total_api_requests > 0 else 0
+        )
+        identity_hit_rate = (
+            (id_hits / total_identity_requests * 100)
+            if total_identity_requests > 0
+            else 0
+        )
 
         # Calculate utilization rate (percentage of cache entries that have been accessed)
-        api_utilization = (utilized_entries / valid_entries * 100) if valid_entries > 0 else 0
+        api_utilization = (
+            (utilized_entries / valid_entries * 100) if valid_entries > 0 else 0
+        )
 
         # Get cache size information
-        cursor.execute("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()")
+        cursor.execute(
+            "SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()"
+        )
         db_size_bytes = cursor.fetchone()[0]
         db_size_mb = db_size_bytes / (1024 * 1024)
 
         # Get most and least accessed entries
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT endpoint, hit_count
             FROM api_cache
             WHERE expires_at > ?
             ORDER BY hit_count DESC
             LIMIT 5
-        """, (now,))
-        most_accessed = [{"endpoint": ep, "hits": hits} for ep, hits in cursor.fetchall()]
+        """,
+            (now,),
+        )
+        most_accessed = [
+            {"endpoint": ep, "hits": hits} for ep, hits in cursor.fetchall()
+        ]
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT endpoint, hit_count
             FROM api_cache
             WHERE expires_at > ? AND hit_count > 0
             ORDER BY hit_count ASC
             LIMIT 5
-        """, (now,))
-        least_accessed = [{"endpoint": ep, "hits": hits} for ep, hits in cursor.fetchall()]
+        """,
+            (now,),
+        )
+        least_accessed = [
+            {"endpoint": ep, "hits": hits} for ep, hits in cursor.fetchall()
+        ]
 
         conn.close()
 
-        logger.info(f"📊 Cache efficiency calculated - API hit rate: {api_hit_rate:.1f}%, Identity hit rate: {identity_hit_rate:.1f}%")
+        logger.info(
+            f"📊 Cache efficiency calculated - API hit rate: {api_hit_rate:.1f}%, Identity hit rate: {identity_hit_rate:.1f}%"
+        )
 
         return {
             "overall_efficiency": {
                 "api_cache_hit_rate_percent": round(api_hit_rate, 2),
                 "identity_cache_hit_rate_percent": round(identity_hit_rate, 2),
                 "combined_hit_rate_percent": round(
-                    ((total_hits or 0) + (id_hits or 0)) /
-                    max(1, (total_api_requests + total_identity_requests)) * 100,
-                    2
+                    ((total_hits or 0) + (id_hits or 0))
+                    / max(1, (total_api_requests + total_identity_requests))
+                    * 100,
+                    2,
                 ),
-                "cache_utilization_percent": round(api_utilization, 2)
+                "cache_utilization_percent": round(api_utilization, 2),
             },
             "api_cache_metrics": {
                 "total_entries": total_entries,
@@ -707,7 +847,7 @@ class OmadaCache:
                 "unused_entries": unused_entries or 0,
                 "utilized_entries": utilized_entries or 0,
                 "max_hits_single_entry": max_hits or 0,
-                "avg_hits_per_entry": round(avg_hits, 2) if avg_hits else 0
+                "avg_hits_per_entry": round(avg_hits, 2) if avg_hits else 0,
             },
             "identity_cache_metrics": {
                 "total_entries": id_total,
@@ -716,56 +856,67 @@ class OmadaCache:
                 "total_hits": id_hits or 0,
                 "unused_entries": id_unused or 0,
                 "max_hits_single_entry": id_max_hits or 0,
-                "avg_hits_per_entry": round(id_avg_hits, 2) if id_avg_hits else 0
+                "avg_hits_per_entry": round(id_avg_hits, 2) if id_avg_hits else 0,
             },
             "cache_performance": {
                 "most_accessed_endpoints": most_accessed,
-                "least_accessed_endpoints": least_accessed
+                "least_accessed_endpoints": least_accessed,
             },
             "storage": {
                 "database_size_bytes": db_size_bytes,
                 "database_size_mb": round(db_size_mb, 2),
-                "database_path": self.db_path
+                "database_path": self.db_path,
             },
             "recommendations": self._generate_efficiency_recommendations(
                 api_hit_rate, api_utilization, unused_entries, total_entries
             ),
-            "timestamp": now.isoformat()
+            "timestamp": now.isoformat(),
         }
 
-    def _generate_efficiency_recommendations(self, hit_rate: float, utilization: float,
-                                             unused: int, total: int) -> list:
+    def _generate_efficiency_recommendations(
+        self, hit_rate: float, utilization: float, unused: int, total: int
+    ) -> list:
         """Generate recommendations based on cache efficiency metrics."""
         recommendations = []
 
         if hit_rate < 30:
-            recommendations.append({
-                "level": "warning",
-                "message": f"Low cache hit rate ({hit_rate:.1f}%). Consider increasing TTL or reviewing cache strategy."
-            })
+            recommendations.append(
+                {
+                    "level": "warning",
+                    "message": f"Low cache hit rate ({hit_rate:.1f}%). Consider increasing TTL or reviewing cache strategy.",
+                }
+            )
         elif hit_rate > 80:
-            recommendations.append({
-                "level": "success",
-                "message": f"Excellent cache hit rate ({hit_rate:.1f}%). Cache is performing well."
-            })
+            recommendations.append(
+                {
+                    "level": "success",
+                    "message": f"Excellent cache hit rate ({hit_rate:.1f}%). Cache is performing well.",
+                }
+            )
 
         if utilization < 50:
-            recommendations.append({
-                "level": "info",
-                "message": f"Low cache utilization ({utilization:.1f}%). Many cached items are not being reused."
-            })
+            recommendations.append(
+                {
+                    "level": "info",
+                    "message": f"Low cache utilization ({utilization:.1f}%). Many cached items are not being reused.",
+                }
+            )
 
         if unused and unused > total * 0.3:
-            recommendations.append({
-                "level": "warning",
-                "message": f"{unused} entries have never been accessed. Consider reducing TTL or cache scope."
-            })
+            recommendations.append(
+                {
+                    "level": "warning",
+                    "message": f"{unused} entries have never been accessed. Consider reducing TTL or cache scope.",
+                }
+            )
 
         if not recommendations:
-            recommendations.append({
-                "level": "success",
-                "message": "Cache efficiency is good. No immediate optimizations needed."
-            })
+            recommendations.append(
+                {
+                    "level": "success",
+                    "message": "Cache efficiency is good. No immediate optimizations needed.",
+                }
+            )
 
         return recommendations
 
@@ -784,7 +935,9 @@ class OmadaCache:
 
         def cleanup_thread():
             """Background thread that runs periodic cleanup."""
-            logger.info(f"🔄 Auto-cleanup thread started (interval: {self.default_ttl}s)")
+            logger.info(
+                f"🔄 Auto-cleanup thread started (interval: {self.default_ttl}s)"
+            )
 
             while self._cleanup_running:
                 try:
@@ -798,7 +951,9 @@ class OmadaCache:
                     deleted_count = self.cleanup_expired()
 
                     if deleted_count > 0:
-                        logger.info(f"🧹 AUTO-CLEANUP: Removed {deleted_count} expired entries")
+                        logger.info(
+                            f"🧹 AUTO-CLEANUP: Removed {deleted_count} expired entries"
+                        )
                     else:
                         logger.debug("🧹 AUTO-CLEANUP: No expired entries to remove")
 
@@ -809,7 +964,10 @@ class OmadaCache:
 
         # Start cleanup thread
         import time
-        self._cleanup_thread = threading.Thread(target=cleanup_thread, daemon=True, name="CacheAutoCleanup")
+
+        self._cleanup_thread = threading.Thread(
+            target=cleanup_thread, daemon=True, name="CacheAutoCleanup"
+        )
         self._cleanup_thread.start()
 
         logger.info(f"✅ Auto-cleanup enabled - will run every {self.default_ttl}s")

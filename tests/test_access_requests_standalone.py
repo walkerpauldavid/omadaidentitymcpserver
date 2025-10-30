@@ -8,6 +8,7 @@ import sys
 import os
 from server import get_access_requests
 
+
 async def main():
     """Test the get_access_requests function directly."""
 
@@ -44,6 +45,7 @@ async def main():
 
     print("\n✅ Testing completed!")
     return 0
+
 
 if __name__ == "__main__":
     exit_code = asyncio.run(main())

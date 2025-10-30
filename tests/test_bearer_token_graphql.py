@@ -20,18 +20,20 @@ sys.path.insert(0, str(parent_dir))
 
 # Load environment variables
 from dotenv import load_dotenv
-load_dotenv(parent_dir / '.env')
+
+load_dotenv(parent_dir / ".env")
+
 
 def read_bearer_token():
     """Read bearer token from bearer.txt in tests folder"""
-    token_file = Path(__file__).parent / 'bearer.txt'
+    token_file = Path(__file__).parent / "bearer.txt"
 
     if not token_file.exists():
         print(f"❌ Token file not found: {token_file}")
         print("Please create bearer.txt in the tests folder with your bearer token")
         sys.exit(1)
 
-    with open(token_file, 'r') as f:
+    with open(token_file, "r") as f:
         token = f.read().strip()
 
     # Strip "Bearer " prefix if present
@@ -41,7 +43,10 @@ def read_bearer_token():
     print(f"   Token preview: {token[:30]}...")
     return token
 
-def test_graphql_pending_approvals(base_url, token, impersonate_user, graphql_version="3.0"):
+
+def test_graphql_pending_approvals(
+    base_url, token, impersonate_user, graphql_version="3.0"
+):
     """Test GraphQL API with a pending approvals query"""
 
     # Build GraphQL URL
@@ -73,19 +78,19 @@ def test_graphql_pending_approvals(base_url, token, impersonate_user, graphql_ve
         "Content-Type": "application/json",
         "Accept": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "impersonate_user": impersonate_user
+        "impersonate_user": impersonate_user,
     }
 
     print(f"   Impersonate User: {impersonate_user}")
     print(f"   Headers: {list(headers.keys())}")
 
     # Prepare payload
-    payload = {
-        "query": query
-    }
+    payload = {"query": query}
 
     try:
-        response = requests.post(graphql_url, headers=headers, json=payload, timeout=30.0)
+        response = requests.post(
+            graphql_url, headers=headers, json=payload, timeout=30.0
+        )
 
         print(f"\n📊 Response Status: {response.status_code}")
 
@@ -98,16 +103,22 @@ def test_graphql_pending_approvals(base_url, token, impersonate_user, graphql_ve
                 for error in data["errors"]:
                     print(f"   - {error.get('message', 'Unknown error')}")
                     if "extensions" in error:
-                        print(f"     Extensions: {json.dumps(error['extensions'], indent=6)}")
+                        print(
+                            f"     Extensions: {json.dumps(error['extensions'], indent=6)}"
+                        )
                 return False
 
             # Success - print data
-            approval_data = data.get("data", {}).get("accessRequestApprovalSurveyQuestions", {})
+            approval_data = data.get("data", {}).get(
+                "accessRequestApprovalSurveyQuestions", {}
+            )
             approvals = approval_data.get("data", [])
             total = approval_data.get("total", 0)
             pages = approval_data.get("pages", 0)
 
-            print(f"✅ SUCCESS! Retrieved {len(approvals)} pending approvals (total: {total}, pages: {pages})")
+            print(
+                f"✅ SUCCESS! Retrieved {len(approvals)} pending approvals (total: {total}, pages: {pages})"
+            )
             print(f"\n📋 Sample Data:")
             for i, approval in enumerate(approvals[:3], 1):
                 print(f"   {i}. {approval.get('workflowStepTitle', 'N/A')}")
@@ -143,6 +154,7 @@ def test_graphql_pending_approvals(base_url, token, impersonate_user, graphql_ve
         print(f"   Exception type: {type(e).__name__}")
         return False
 
+
 def main():
     """Main test function"""
     print("=" * 80)
@@ -155,7 +167,7 @@ def main():
         print("❌ OMADA_BASE_URL not found in .env file")
         sys.exit(1)
 
-    base_url = base_url.rstrip('/')
+    base_url = base_url.rstrip("/")
     print(f"\n🌐 Omada Base URL: {base_url}")
 
     # Get GraphQL version from environment
@@ -177,13 +189,17 @@ def main():
     print(f"   Will use impersonate_user: {impersonate_user}")
 
     # Test pending approvals endpoint
-    pending_approvals_success = test_graphql_pending_approvals(base_url, token, impersonate_user, graphql_version)
+    pending_approvals_success = test_graphql_pending_approvals(
+        base_url, token, impersonate_user, graphql_version
+    )
 
     # Summary
     print("\n" + "=" * 80)
     print("📝 Test Summary:")
     print("=" * 80)
-    print(f"   Pending Approvals: {'✅ PASS' if pending_approvals_success else '❌ FAIL'}")
+    print(
+        f"   Pending Approvals: {'✅ PASS' if pending_approvals_success else '❌ FAIL'}"
+    )
 
     if pending_approvals_success:
         print(f"\n🎉 Test passed! Bearer token is valid for GraphQL API")
@@ -194,9 +210,12 @@ def main():
         print(f"   1. Check that bearer.txt contains a valid token")
         print(f"   2. Verify the token hasn't expired (typically 1 hour)")
         print(f"   3. Ensure impersonate_user email is correct")
-        print(f"   4. GraphQL may require client credentials token instead of device code")
+        print(
+            f"   4. GraphQL may require client credentials token instead of device code"
+        )
         print(f"   5. Check token signature key - GraphQL may use different validation")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

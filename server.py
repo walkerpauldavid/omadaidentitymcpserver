@@ -33,16 +33,13 @@ if log_dir and not os.path.exists(log_dir):
 # Configure logging with both file and console handlers
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler(LOG_FILE, encoding="utf-8"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
 # Configure cache logger - it will use root logger's handlers via propagation
-cache_logger = logging.getLogger('cache')
+cache_logger = logging.getLogger("cache")
 cache_logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 # Don't add handlers, let it propagate to root logger
 cache_logger.propagate = True
@@ -51,11 +48,17 @@ logger.info(f"Logging initialized. Writing logs to: {os.path.abspath(LOG_FILE)}"
 logger.info(f"Cache logger will use root logger handlers (level: {LOG_LEVEL})")
 
 # NOW import modules that create loggers - logging is already configured
-from helpers import validate_required_fields, build_error_response, build_success_response, build_pagination_clause
+from helpers import (
+    validate_required_fields,
+    build_error_response,
+    build_success_response,
+    build_pagination_clause,
+)
 from cache import OmadaCache
 from cache_config import get_ttl_for_operation, should_cache, DEFAULT_TTL
 
 logger.info("All modules imported successfully")
+
 
 def get_function_log_level(function_name: str) -> int:
     """
@@ -76,6 +79,7 @@ def get_function_log_level(function_name: str) -> int:
 
     # Convert string to logging level, default to INFO if invalid
     return getattr(logging, func_log_level, logging.INFO)
+
 
 def set_function_logger_level(function_name: str) -> tuple:
     """
@@ -103,9 +107,12 @@ def set_function_logger_level(function_name: str) -> tuple:
 
     # Log the level change if it's different (only at DEBUG level to avoid noise)
     if old_level != new_level and new_level <= logging.DEBUG:
-        logger.debug(f"Function '{function_name}' using log level: {logging.getLevelName(new_level)}")
+        logger.debug(
+            f"Function '{function_name}' using log level: {logging.getLevelName(new_level)}"
+        )
 
     return (old_level, old_handler_levels)
+
 
 def with_function_logging(func):
     """
@@ -118,6 +125,7 @@ def with_function_logging(func):
             pass
     """
     if asyncio.iscoroutinefunction(func):
+
         async def async_wrapper(*args, **kwargs):
             old_level, old_handler_levels = set_function_logger_level(func.__name__)
             # Log function entrance at INFO level
@@ -129,7 +137,9 @@ def with_function_logging(func):
                 return result
             except Exception as e:
                 # Log function exit with error at INFO level
-                logger.info(f"EXITING function: {func.__name__} with error: {type(e).__name__}")
+                logger.info(
+                    f"EXITING function: {func.__name__} with error: {type(e).__name__}"
+                )
                 raise
             finally:
                 # Restore logger level
@@ -137,6 +147,7 @@ def with_function_logging(func):
                 # Restore handler levels
                 for handler, level in old_handler_levels:
                     handler.setLevel(level)
+
         # Manually preserve metadata without setting __wrapped__ (which causes FastMCP to bypass decorator)
         async_wrapper.__name__ = func.__name__
         async_wrapper.__doc__ = func.__doc__
@@ -147,6 +158,7 @@ def with_function_logging(func):
         async_wrapper.__dict__.update(func.__dict__)
         return async_wrapper
     else:
+
         def sync_wrapper(*args, **kwargs):
             old_level, old_handler_levels = set_function_logger_level(func.__name__)
             # Log function entrance at INFO level
@@ -158,7 +170,9 @@ def with_function_logging(func):
                 return result
             except Exception as e:
                 # Log function exit with error at INFO level
-                logger.info(f"EXITING function: {func.__name__} with error: {type(e).__name__}")
+                logger.info(
+                    f"EXITING function: {func.__name__} with error: {type(e).__name__}"
+                )
                 raise
             finally:
                 # Restore logger level
@@ -166,6 +180,7 @@ def with_function_logging(func):
                 # Restore handler levels
                 for handler, level in old_handler_levels:
                     handler.setLevel(level)
+
         # Manually preserve metadata without setting __wrapped__ (which causes FastMCP to bypass decorator)
         sync_wrapper.__name__ = func.__name__
         sync_wrapper.__doc__ = func.__doc__
@@ -176,21 +191,30 @@ def with_function_logging(func):
         sync_wrapper.__dict__.update(func.__dict__)
         return sync_wrapper
 
+
 # Custom Exception Classes
 class OmadaServerError(Exception):
     """Base exception for Omada server errors"""
-    def __init__(self, message: str, status_code: int = None, response_body: str = None):
+
+    def __init__(
+        self, message: str, status_code: int = None, response_body: str = None
+    ):
         self.status_code = status_code
         self.response_body = response_body
         super().__init__(message)
 
+
 class AuthenticationError(OmadaServerError):
     """Raised when authentication fails"""
+
     pass
+
 
 class ODataQueryError(OmadaServerError):
     """Raised when OData query is malformed or fails"""
+
     pass
+
 
 mcp = FastMCP("OmadaIdentityMCP")
 
@@ -201,18 +225,23 @@ CACHE_AUTO_CLEANUP = os.getenv("CACHE_AUTO_CLEANUP", "true").lower() == "true"
 
 if CACHE_ENABLED:
     cache = OmadaCache(default_ttl=CACHE_TTL_SECONDS, auto_cleanup=CACHE_AUTO_CLEANUP)
-    logger.info(f"✅ Cache system ENABLED (TTL: {CACHE_TTL_SECONDS}s, Auto-cleanup: {CACHE_AUTO_CLEANUP})")
+    logger.info(
+        f"✅ Cache system ENABLED (TTL: {CACHE_TTL_SECONDS}s, Auto-cleanup: {CACHE_AUTO_CLEANUP})"
+    )
 else:
     cache = None
     logger.info("⚠️ Cache system DISABLED")
 
 # Register MCP Prompts for workflow guidance
 from prompts import register_prompts
+
 register_prompts(mcp)
 
 # Register MCP Completions for autocomplete suggestions
 from completions import register_completions
+
 register_completions(mcp)
+
 
 def _get_omada_base_url(omada_base_url: str = None) -> str:
     """
@@ -230,24 +259,27 @@ def _get_omada_base_url(omada_base_url: str = None) -> str:
     if not omada_base_url:
         omada_base_url = os.getenv("OMADA_BASE_URL")
         if not omada_base_url:
-            raise Exception("OMADA_BASE_URL not found in environment variables or parameters")
-    return omada_base_url.rstrip('/')
+            raise Exception(
+                "OMADA_BASE_URL not found in environment variables or parameters"
+            )
+    return omada_base_url.rstrip("/")
+
 
 def _build_odata_filter(field_name: str, value: str, operator: str) -> str:
     """
     Build an OData filter expression based on the operator.
-    
+
     Args:
         field_name: The field name (e.g., "FIRSTNAME", "LASTNAME")
         value: The value to filter by
         operator: The OData operator (eq, ne, contains, startswith, etc.)
-        
+
     Returns:
         OData filter expression string
     """
     # Escape single quotes in value
     escaped_value = value.replace("'", "''")
-    
+
     if operator in ["eq", "ne", "gt", "ge", "lt", "le", "like"]:
         # Standard comparison operators (including LIKE)
         return f"{field_name} {operator} '{escaped_value}'"
@@ -284,18 +316,43 @@ def _summarize_entities(data: dict, entity_type: str) -> dict:
 
     # Define key fields for each entity type
     summary_fields = {
-        "Identity": ["Id", "UId", "DISPLAYNAME", "FIRSTNAME", "LASTNAME", "EMAIL", "EMPLOYEEID", "DEPARTMENT", "STATUS"],
-        "Resource": ["Id", "DISPLAYNAME", "DESCRIPTION", "RESOURCEKEY", "STATUS", "Systemref"],
+        "Identity": [
+            "Id",
+            "UId",
+            "DISPLAYNAME",
+            "FIRSTNAME",
+            "LASTNAME",
+            "EMAIL",
+            "EMPLOYEEID",
+            "DEPARTMENT",
+            "STATUS",
+        ],
+        "Resource": [
+            "Id",
+            "DISPLAYNAME",
+            "DESCRIPTION",
+            "RESOURCEKEY",
+            "STATUS",
+            "Systemref",
+        ],
         "Role": ["Id", "DISPLAYNAME", "DESCRIPTION", "STATUS"],
         "Account": ["Id", "ACCOUNTNAME", "DISPLAYNAME", "STATUS", "SYSTEM"],
         "Application": ["Id", "DISPLAYNAME", "DESCRIPTION", "STATUS"],
         "System": ["Id", "DISPLAYNAME", "DESCRIPTION", "STATUS"],
-        "CalculatedAssignments": ["Id", "AssignmentKey", "AccountName", "Identity", "Resource"],
-        "AssignmentPolicy": ["Id", "DISPLAYNAME", "DESCRIPTION", "STATUS"]
+        "CalculatedAssignments": [
+            "Id",
+            "AssignmentKey",
+            "AccountName",
+            "Identity",
+            "Resource",
+        ],
+        "AssignmentPolicy": ["Id", "DISPLAYNAME", "DESCRIPTION", "STATUS"],
     }
 
     # Get relevant fields for this entity type
-    fields_to_keep = summary_fields.get(entity_type, ["Id", "DISPLAYNAME", "DESCRIPTION"])
+    fields_to_keep = summary_fields.get(
+        entity_type, ["Id", "DISPLAYNAME", "DESCRIPTION"]
+    )
 
     summarized_entities = []
     for entity in data.get("value", []):
@@ -338,11 +395,16 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
     # Define key fields for each GraphQL data type
     # Fields listed here are ONLY fields that will be returned
     summary_fields = {
-        "PendingApproval": ["workflowStep", "workflowStepTitle", "reason", "resourceAssignment"],
+        "PendingApproval": [
+            "workflowStep",
+            "workflowStepTitle",
+            "reason",
+            "resourceAssignment",
+        ],
         "AccessRequest": ["id", "beneficiary", "resource", "status"],
         "CalculatedAssignment": ["complianceStatus", "account", "resource", "identity"],
         "Context": ["id", "displayName", "type"],
-        "Resource": ["id", "name", "description", "system"]
+        "Resource": ["id", "name", "description", "system"],
     }
 
     # Define fields to explicitly exclude (technical fields users shouldn't see)
@@ -351,7 +413,7 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
         "AccessRequest": [],
         "CalculatedAssignment": [],
         "Context": [],
-        "Resource": []
+        "Resource": [],
     }
 
     # Get relevant fields for this data type
@@ -385,18 +447,20 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
 
 @with_function_logging
 @mcp.tool()
-async def query_omada_entity(entity_type: str = "Identity",
-                            filters: dict = None,
-                            count_only: bool = False,
-                            summary_mode: bool = True,
-                            top: int = None,
-                            skip: int = None,
-                            select_fields: str = None,
-                            order_by: str = None,
-                            expand: str = None,
-                            include_count: bool = False,
-                            bearer_token: str = None,
-                            impersonate_user: str = None) -> str:
+async def query_omada_entity(
+    entity_type: str = "Identity",
+    filters: dict = None,
+    count_only: bool = False,
+    summary_mode: bool = True,
+    top: int = None,
+    skip: int = None,
+    select_fields: str = None,
+    order_by: str = None,
+    expand: str = None,
+    include_count: bool = False,
+    bearer_token: str = None,
+    impersonate_user: str = None,
+) -> str:
     """
     Generic query function for any Omada entity type (Identity, Resource, Role, etc).
 
@@ -492,7 +556,16 @@ async def query_omada_entity(entity_type: str = "Identity",
     """
     try:
         # Validate entity type
-        valid_entities = ["Identity", "Resource", "Role", "Account", "Application", "System", "CalculatedAssignments", "AssignmentPolicy"]
+        valid_entities = [
+            "Identity",
+            "Resource",
+            "Role",
+            "Account",
+            "Application",
+            "System",
+            "CalculatedAssignments",
+            "AssignmentPolicy",
+        ]
         if entity_type not in valid_entities:
             return f"❌ Invalid entity type '{entity_type}'. Valid types: {', '.join(valid_entities)}"
 
@@ -507,10 +580,10 @@ async def query_omada_entity(entity_type: str = "Identity",
             endpoint_url = f"{omada_base_url}/OData/BuiltIn/{entity_type}"
         else:
             endpoint_url = f"{omada_base_url}/OData/DataObjects/{entity_type}"
-        
+
         # Build query parameters
         query_params = {}
-        
+
         # Initialize filters dictionary if not provided
         if filters is None:
             filters = {}
@@ -545,11 +618,17 @@ async def query_omada_entity(entity_type: str = "Identity",
         # Handle generic field filtering for any entity type
         if field_filters:
             for field_filter in field_filters:
-                if isinstance(field_filter, dict) and "field" in field_filter and "value" in field_filter:
+                if (
+                    isinstance(field_filter, dict)
+                    and "field" in field_filter
+                    and "value" in field_filter
+                ):
                     field_name = field_filter["field"]
                     field_value = field_filter["value"]
                     field_operator = field_filter.get("operator", "eq")
-                    auto_filters.append(_build_odata_filter(field_name, field_value, field_operator))
+                    auto_filters.append(
+                        _build_odata_filter(field_name, field_value, field_operator)
+                    )
 
         # For CalculatedAssignments entities, handle identity_id filtering
         if entity_type == "CalculatedAssignments":
@@ -562,29 +641,29 @@ async def query_omada_entity(entity_type: str = "Identity",
             all_filters.extend(auto_filters)
         if custom_filter:
             all_filters.append(f"({custom_filter})")
-        
+
         if all_filters:
-            query_params['$filter'] = " and ".join(all_filters)
-        
+            query_params["$filter"] = " and ".join(all_filters)
+
         # Add count parameter if requested
         if count_only:
-            query_params['$count'] = 'true'
-            query_params['$top'] = '0'  # Don't return actual records, just count
+            query_params["$count"] = "true"
+            query_params["$top"] = "0"  # Don't return actual records, just count
         else:
             # Add other OData parameters
             if top:
-                query_params['$top'] = str(top)
+                query_params["$top"] = str(top)
             if skip:
-                query_params['$skip'] = str(skip)
+                query_params["$skip"] = str(skip)
             if select_fields:
-                query_params['$select'] = select_fields
+                query_params["$select"] = select_fields
             if order_by:
-                query_params['$orderby'] = order_by
+                query_params["$orderby"] = order_by
             if expand:
-                query_params['$expand'] = expand
+                query_params["$expand"] = expand
             if include_count:
-                query_params['$count'] = 'true'
-        
+                query_params["$count"] = "true"
+
         # Construct final URL with query parameters
         if query_params:
             query_string = urllib.parse.urlencode(query_params)
@@ -594,7 +673,9 @@ async def query_omada_entity(entity_type: str = "Identity",
         if bearer_token:
             logger.debug("Using provided bearer token for OData request")
             # Strip "Bearer " prefix if already present to avoid double-prefix
-            clean_token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
+            clean_token = (
+                bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
+            )
             auth_header = f"Bearer {clean_token}"
         else:
             # OAuth token functions have been migrated to oauth_mcp_server
@@ -615,17 +696,17 @@ async def query_omada_entity(entity_type: str = "Identity",
             "Authorization": auth_header,
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
         # Add impersonate_user header if provided (required for user-delegated tokens like device code)
         if impersonate_user:
             headers["impersonate_user"] = impersonate_user
             logger.debug(f"Using impersonate_user: {impersonate_user}")
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(endpoint_url, headers=headers, timeout=30.0)
-            
+
             if response.status_code == 200:
                 # Parse the response
                 data = response.json()
@@ -638,12 +719,14 @@ async def query_omada_entity(entity_type: str = "Identity",
                         endpoint=endpoint_url,
                         entity_type=entity_type,
                         count=count,
-                        filter=query_params.get('$filter', 'none')
+                        filter=query_params.get("$filter", "none"),
                     )
                 else:
                     # Return full data with metadata
                     entities_found = len(data.get("value", []))
-                    total_count = data.get("@odata.count")  # Available if $count=true was included
+                    total_count = data.get(
+                        "@odata.count"
+                    )  # Available if $count=true was included
 
                     # Apply summarization if requested
                     response_data = data
@@ -655,8 +738,8 @@ async def query_omada_entity(entity_type: str = "Identity",
                         "entity_type": entity_type,
                         "entities_returned": entities_found,
                         "total_count": total_count,
-                        "filter": query_params.get('$filter', 'none'),
-                        "summary_mode": summary_mode
+                        "filter": query_params.get("$filter", "none"),
+                        "summary_mode": summary_mode,
                     }
 
                     # Add entity-specific metadata
@@ -664,61 +747,64 @@ async def query_omada_entity(entity_type: str = "Identity",
                         extra_fields["resource_type_id"] = resource_type_id
 
                     return build_success_response(
-                        data=response_data,
-                        endpoint=endpoint_url,
-                        **extra_fields
+                        data=response_data, endpoint=endpoint_url, **extra_fields
                     )
             elif response.status_code == 400:
-                raise ODataQueryError(f"Bad request - invalid OData query: {response.text[:200]}", response.status_code)
+                raise ODataQueryError(
+                    f"Bad request - invalid OData query: {response.text[:200]}",
+                    response.status_code,
+                )
             elif response.status_code == 401:
-                raise AuthenticationError("Authentication failed - token may be expired", response.status_code)
+                raise AuthenticationError(
+                    "Authentication failed - token may be expired", response.status_code
+                )
             elif response.status_code == 403:
-                raise AuthenticationError("Access forbidden - insufficient permissions", response.status_code)
+                raise AuthenticationError(
+                    "Access forbidden - insufficient permissions", response.status_code
+                )
             elif response.status_code == 404:
-                raise OmadaServerError("Omada endpoint not found - check base URL", response.status_code)
+                raise OmadaServerError(
+                    "Omada endpoint not found - check base URL", response.status_code
+                )
             elif response.status_code >= 500:
-                raise OmadaServerError(f"Omada server error: {response.status_code}", response.status_code, response.text)
+                raise OmadaServerError(
+                    f"Omada server error: {response.status_code}",
+                    response.status_code,
+                    response.text,
+                )
             else:
-                raise OmadaServerError(f"Unexpected response: {response.status_code}", response.status_code, response.text)
-                
+                raise OmadaServerError(
+                    f"Unexpected response: {response.status_code}",
+                    response.status_code,
+                    response.text,
+                )
+
     except AuthenticationError as e:
-        return build_error_response(
-            error_type="AuthenticationError",
-            message=str(e)
-        )
+        return build_error_response(error_type="AuthenticationError", message=str(e))
     except ODataQueryError as e:
-        return build_error_response(
-            error_type="ODataQueryError",
-            message=str(e)
-        )
+        return build_error_response(error_type="ODataQueryError", message=str(e))
     except OmadaServerError as e:
-        return build_error_response(
-            error_type="OmadaServerError",
-            message=str(e)
-        )
+        return build_error_response(error_type="OmadaServerError", message=str(e))
     except httpx.RequestError as e:
-        return build_error_response(
-            error_type="NetworkError",
-            message=str(e)
-        )
+        return build_error_response(error_type="NetworkError", message=str(e))
     except Exception as e:
-        return build_error_response(
-            error_type=type(e).__name__,
-            message=str(e)
-        )
+        return build_error_response(error_type=type(e).__name__, message=str(e))
+
 
 @with_function_logging
 @mcp.tool()
-async def query_omada_identity(field_filters: list = None,
-                              filter_condition: str = None,
-                              count_only: bool = False,
-                              summary_mode: bool = True,
-                              top: int = None,
-                              skip: int = None,
-                              select_fields: str = None,
-                              order_by: str = None,
-                              include_count: bool = False,
-                              bearer_token: str = None) -> str:
+async def query_omada_identity(
+    field_filters: list = None,
+    filter_condition: str = None,
+    count_only: bool = False,
+    summary_mode: bool = True,
+    top: int = None,
+    skip: int = None,
+    select_fields: str = None,
+    order_by: str = None,
+    include_count: bool = False,
+    bearer_token: str = None,
+) -> str:
     """
     Query Omada Identity entities (wrapper for query_omada_entity).
 
@@ -786,22 +872,25 @@ async def query_omada_identity(field_filters: list = None,
         select_fields=select_fields,
         order_by=order_by,
         include_count=include_count,
-        bearer_token=bearer_token
+        bearer_token=bearer_token,
     )
+
 
 @with_function_logging
 @mcp.tool()
-async def query_omada_resources(resource_type_id: int = None,
-                               resource_type_name: str = None,
-                               system_id: int = None,
-                               filter_condition: str = None,
-                               count_only: bool = False,
-                               top: int = None,
-                               skip: int = None,
-                               select_fields: str = None,
-                               order_by: str = None,
-                               include_count: bool = False,
-                               bearer_token: str = None) -> str:
+async def query_omada_resources(
+    resource_type_id: int = None,
+    resource_type_name: str = None,
+    system_id: int = None,
+    filter_condition: str = None,
+    count_only: bool = False,
+    top: int = None,
+    skip: int = None,
+    select_fields: str = None,
+    order_by: str = None,
+    include_count: bool = False,
+    bearer_token: str = None,
+) -> str:
     """
     Query Omada Resource entities using OData API (for ADMINISTRATIVE queries only).
 
@@ -817,7 +906,7 @@ async def query_omada_resources(resource_type_id: int = None,
     - Resource type analysis
 
     Query Omada Resource entities (wrapper for query_omada_entity).
-    
+
     Args:
         resource_type_id: Numeric ID for resource type (e.g., 1011066 for Application Roles)
         resource_type_name: Name-based lookup for resource type (e.g., "APPLICATION_ROLES")
@@ -854,22 +943,25 @@ async def query_omada_resources(resource_type_id: int = None,
         select_fields=select_fields,
         order_by=order_by,
         include_count=include_count,
-        bearer_token=bearer_token
+        bearer_token=bearer_token,
     )
+
 
 @with_function_logging
 @mcp.tool()
-async def query_omada_entities(entity_type: str = "Identity",
-                              field_filters: list = None,
-                              filter_condition: str = None,
-                              count_only: bool = False,
-                              top: int = None,
-                              skip: int = None,
-                              select_fields: str = None,
-                              order_by: str = None,
-                              expand: str = None,
-                              include_count: bool = False,
-                              bearer_token: str = None) -> str:
+async def query_omada_entities(
+    entity_type: str = "Identity",
+    field_filters: list = None,
+    filter_condition: str = None,
+    count_only: bool = False,
+    top: int = None,
+    skip: int = None,
+    select_fields: str = None,
+    order_by: str = None,
+    expand: str = None,
+    include_count: bool = False,
+    bearer_token: str = None,
+) -> str:
     """
     Modern generic query function for Omada entities using field filters.
 
@@ -908,20 +1000,23 @@ async def query_omada_entities(entity_type: str = "Identity",
         order_by=order_by,
         expand=expand,
         include_count=include_count,
-        bearer_token=bearer_token
+        bearer_token=bearer_token,
     )
+
 
 @with_function_logging
 @mcp.tool()
-async def query_calculated_assignments(identity_id: int = None,
-                                      select_fields: str = "AssignmentKey,AccountName",
-                                      expand: str = "Identity,Resource,ResourceType",
-                                      filter_condition: str = None,
-                                      top: int = None,
-                                      skip: int = None,
-                                      order_by: str = None,
-                                      include_count: bool = False,
-                                      bearer_token: str = None) -> str:
+async def query_calculated_assignments(
+    identity_id: int = None,
+    select_fields: str = "AssignmentKey,AccountName",
+    expand: str = "Identity,Resource,ResourceType",
+    filter_condition: str = None,
+    top: int = None,
+    skip: int = None,
+    order_by: str = None,
+    include_count: bool = False,
+    bearer_token: str = None,
+) -> str:
     """
     Query Omada CalculatedAssignments entities (wrapper for query_omada_entity).
 
@@ -955,17 +1050,20 @@ async def query_calculated_assignments(identity_id: int = None,
         order_by=order_by,
         expand=expand,
         include_count=include_count,
-        bearer_token=bearer_token
+        bearer_token=bearer_token,
     )
+
 
 @with_function_logging
 @mcp.tool()
-async def get_all_omada_identities(top: int = 1000,
-                                  skip: int = None,
-                                  select_fields: str = None,
-                                  order_by: str = None,
-                                  include_count: bool = True,
-                                  bearer_token: str = None) -> str:
+async def get_all_omada_identities(
+    top: int = 1000,
+    skip: int = None,
+    select_fields: str = None,
+    order_by: str = None,
+    include_count: bool = True,
+    bearer_token: str = None,
+) -> str:
     """
     Retrieve all identities from Omada Identity system with pagination support.
 
@@ -987,7 +1085,7 @@ async def get_all_omada_identities(top: int = 1000,
         order_by=order_by,
         filter_condition=None,  # No filter to get all
         include_count=include_count,
-        bearer_token=bearer_token
+        bearer_token=bearer_token,
     )
 
 
@@ -996,6 +1094,7 @@ async def get_all_omada_identities(top: int = 1000,
 def ping() -> str:
     logger.info("Ping function called - responding with pong")
     return "pong"
+
 
 @with_function_logging
 @mcp.tool()
@@ -1023,21 +1122,25 @@ async def check_omada_config() -> str:
 
         if missing:
             config["status"] = "INVALID"
-            config["error"] = f"Missing required environment variables: {', '.join(missing)}"
+            config["error"] = (
+                f"Missing required environment variables: {', '.join(missing)}"
+            )
         else:
             config["status"] = "VALID"
 
         # Add note about OAuth migration
-        config["note"] = "OAuth token functions have been migrated to oauth_mcp_server. All Omada functions require bearer_token parameter."
-        config["usage_example"] = "get_pending_approvals(impersonate_user='user@domain.com', bearer_token='eyJ0...')"
+        config["note"] = (
+            "OAuth token functions have been migrated to oauth_mcp_server. All Omada functions require bearer_token parameter."
+        )
+        config["usage_example"] = (
+            "get_pending_approvals(impersonate_user='user@domain.com', bearer_token='eyJ0...')"
+        )
 
         return build_success_response(data=config)
 
     except Exception as e:
-        return build_error_response(
-            error_type=type(e).__name__,
-            message=str(e)
-        )
+        return build_error_response(error_type=type(e).__name__, message=str(e))
+
 
 @with_function_logging
 @mcp.tool()
@@ -1056,10 +1159,13 @@ async def get_cache_stats() -> str:
     """
     try:
         if not CACHE_ENABLED or cache is None:
-            return json.dumps({
-                "cache_enabled": False,
-                "message": "Cache is disabled. Set CACHE_ENABLED=true in .env to enable caching."
-            }, indent=2)
+            return json.dumps(
+                {
+                    "cache_enabled": False,
+                    "message": "Cache is disabled. Set CACHE_ENABLED=true in .env to enable caching.",
+                },
+                indent=2,
+            )
 
         # Get stats from cache
         stats = cache.get_stats()
@@ -1073,19 +1179,21 @@ async def get_cache_stats() -> str:
             "expired_entries_cleaned": expired_count,
             "configuration": {
                 "default_ttl_seconds": CACHE_TTL_SECONDS,
-                "cache_file": stats.get("cache_file", "omada_cache.db")
-            }
+                "cache_file": stats.get("cache_file", "omada_cache.db"),
+            },
         }
 
-        logger.info(f"📊 Cache stats requested - Valid entries: {stats['api_cache']['valid_entries']}, Hits: {stats['api_cache']['total_hits']}")
+        logger.info(
+            f"📊 Cache stats requested - Valid entries: {stats['api_cache']['valid_entries']}, Hits: {stats['api_cache']['total_hits']}"
+        )
 
         return json.dumps(result, indent=2)
 
     except Exception as e:
         return build_error_response(
-            error_type=type(e).__name__,
-            message=f"Error getting cache stats: {str(e)}"
+            error_type=type(e).__name__, message=f"Error getting cache stats: {str(e)}"
         )
+
 
 @with_function_logging
 @mcp.tool()
@@ -1113,37 +1221,47 @@ async def clear_cache(endpoint: str = None) -> str:
     """
     try:
         if not CACHE_ENABLED or cache is None:
-            return json.dumps({
-                "cache_enabled": False,
-                "message": "Cache is disabled. No cache entries to clear."
-            }, indent=2)
+            return json.dumps(
+                {
+                    "cache_enabled": False,
+                    "message": "Cache is disabled. No cache entries to clear.",
+                },
+                indent=2,
+            )
 
         # Clear cache
         deleted_count = cache.invalidate(endpoint=endpoint)
 
         if endpoint:
             message = f"✅ Cache cleared for endpoint: {endpoint}"
-            logger.info(f"🗑️ Cache cleared for endpoint '{endpoint}' - {deleted_count} entries deleted")
+            logger.info(
+                f"🗑️ Cache cleared for endpoint '{endpoint}' - {deleted_count} entries deleted"
+            )
         else:
             message = f"✅ Entire cache cleared"
             logger.info(f"🗑️ ENTIRE cache cleared - {deleted_count} entries deleted")
 
-        return json.dumps({
-            "success": True,
-            "message": message,
-            "entries_deleted": deleted_count,
-            "endpoint": endpoint or "all"
-        }, indent=2)
+        return json.dumps(
+            {
+                "success": True,
+                "message": message,
+                "entries_deleted": deleted_count,
+                "endpoint": endpoint or "all",
+            },
+            indent=2,
+        )
 
     except Exception as e:
         return build_error_response(
-            error_type=type(e).__name__,
-            message=f"Error clearing cache: {str(e)}"
+            error_type=type(e).__name__, message=f"Error clearing cache: {str(e)}"
         )
+
 
 @with_function_logging
 @mcp.tool()
-async def view_cache_contents_detailed(limit: int = 10, include_expired: bool = False) -> str:
+async def view_cache_contents_detailed(
+    limit: int = 10, include_expired: bool = False
+) -> str:
     """
     View detailed cache contents including FULL parameters for debugging.
 
@@ -1159,13 +1277,17 @@ async def view_cache_contents_detailed(limit: int = 10, include_expired: bool = 
     """
     try:
         if not CACHE_ENABLED or cache is None:
-            return json.dumps({
-                "cache_enabled": False,
-                "message": "Cache is disabled. No cache contents to view."
-            }, indent=2)
+            return json.dumps(
+                {
+                    "cache_enabled": False,
+                    "message": "Cache is disabled. No cache contents to view.",
+                },
+                indent=2,
+            )
 
         # Get raw cache data from database
         import sqlite3
+
         conn = sqlite3.connect(cache.db_path)
         cursor = conn.cursor()
         now = datetime.now()
@@ -1173,7 +1295,8 @@ async def view_cache_contents_detailed(limit: int = 10, include_expired: bool = 
         where_clause = "" if include_expired else "WHERE expires_at > ?"
         params = [] if include_expired else [now]
 
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             SELECT
                 cache_key,
                 endpoint,
@@ -1186,11 +1309,21 @@ async def view_cache_contents_detailed(limit: int = 10, include_expired: bool = 
             {where_clause}
             ORDER BY created_at DESC
             LIMIT ?
-        """, params + [limit])
+        """,
+            params + [limit],
+        )
 
         entries = []
         for row in cursor.fetchall():
-            cache_key, endpoint, query_params, created_at, expires_at, hit_count, last_accessed = row
+            (
+                cache_key,
+                endpoint,
+                query_params,
+                created_at,
+                expires_at,
+                hit_count,
+                last_accessed,
+            ) = row
             created_dt = datetime.fromisoformat(created_at)
             expires_dt = datetime.fromisoformat(expires_at)
             age_seconds = (now - created_dt).total_seconds()
@@ -1202,19 +1335,21 @@ async def view_cache_contents_detailed(limit: int = 10, include_expired: bool = 
             except:
                 params_dict = {"error": "Could not parse params", "raw": query_params}
 
-            entries.append({
-                "cache_key": cache_key,
-                "cache_key_short": cache_key[:16] + "...",
-                "endpoint": endpoint,
-                "full_params": params_dict,  # FULL PARAMETERS
-                "created_at": created_at,
-                "expires_at": expires_at,
-                "age_seconds": round(age_seconds, 1),
-                "ttl_remaining_seconds": round(ttl_remaining, 1),
-                "hit_count": hit_count,
-                "last_accessed": last_accessed,
-                "status": "valid" if expires_dt > now else "expired"
-            })
+            entries.append(
+                {
+                    "cache_key": cache_key,
+                    "cache_key_short": cache_key[:16] + "...",
+                    "endpoint": endpoint,
+                    "full_params": params_dict,  # FULL PARAMETERS
+                    "created_at": created_at,
+                    "expires_at": expires_at,
+                    "age_seconds": round(age_seconds, 1),
+                    "ttl_remaining_seconds": round(ttl_remaining, 1),
+                    "hit_count": hit_count,
+                    "last_accessed": last_accessed,
+                    "status": "valid" if expires_dt > now else "expired",
+                }
+            )
 
         conn.close()
 
@@ -1223,18 +1358,21 @@ async def view_cache_contents_detailed(limit: int = 10, include_expired: bool = 
             "total_shown": len(entries),
             "limit": limit,
             "include_expired": include_expired,
-            "note": "This shows FULL parameters to debug duplicate entries"
+            "note": "This shows FULL parameters to debug duplicate entries",
         }
 
-        logger.info(f"📋 Detailed cache contents viewed - {len(entries)} entries with full params")
+        logger.info(
+            f"📋 Detailed cache contents viewed - {len(entries)} entries with full params"
+        )
 
         return json.dumps(result, indent=2)
 
     except Exception as e:
         return build_error_response(
             error_type=type(e).__name__,
-            message=f"Error viewing detailed cache contents: {str(e)}"
+            message=f"Error viewing detailed cache contents: {str(e)}",
         )
+
 
 @with_function_logging
 @mcp.tool()
@@ -1269,23 +1407,31 @@ async def view_cache_contents(limit: int = 50, include_expired: bool = False) ->
     """
     try:
         if not CACHE_ENABLED or cache is None:
-            return json.dumps({
-                "cache_enabled": False,
-                "message": "Cache is disabled. No cache contents to view."
-            }, indent=2)
+            return json.dumps(
+                {
+                    "cache_enabled": False,
+                    "message": "Cache is disabled. No cache contents to view.",
+                },
+                indent=2,
+            )
 
         # Get cache contents
-        contents = cache.view_cache_contents(limit=limit, include_expired=include_expired)
+        contents = cache.view_cache_contents(
+            limit=limit, include_expired=include_expired
+        )
 
-        logger.info(f"📋 Cache contents viewed - {contents['total_shown']['api_cache']} API + {contents['total_shown']['identity_cache']} identity entries")
+        logger.info(
+            f"📋 Cache contents viewed - {contents['total_shown']['api_cache']} API + {contents['total_shown']['identity_cache']} identity entries"
+        )
 
         return json.dumps(contents, indent=2)
 
     except Exception as e:
         return build_error_response(
             error_type=type(e).__name__,
-            message=f"Error viewing cache contents: {str(e)}"
+            message=f"Error viewing cache contents: {str(e)}",
         )
+
 
 @with_function_logging
 @mcp.tool()
@@ -1320,25 +1466,33 @@ async def get_cache_efficiency() -> str:
     """
     try:
         if not CACHE_ENABLED or cache is None:
-            return json.dumps({
-                "cache_enabled": False,
-                "message": "Cache is disabled. No efficiency metrics available."
-            }, indent=2)
+            return json.dumps(
+                {
+                    "cache_enabled": False,
+                    "message": "Cache is disabled. No efficiency metrics available.",
+                },
+                indent=2,
+            )
 
         # Get efficiency metrics
         efficiency = cache.get_cache_efficiency()
 
-        logger.info(f"📊 Cache efficiency: {efficiency['overall_efficiency']['combined_hit_rate_percent']:.1f}% hit rate")
+        logger.info(
+            f"📊 Cache efficiency: {efficiency['overall_efficiency']['combined_hit_rate_percent']:.1f}% hit rate"
+        )
 
         return json.dumps(efficiency, indent=2)
 
     except Exception as e:
         return build_error_response(
             error_type=type(e).__name__,
-            message=f"Error calculating cache efficiency: {str(e)}"
+            message=f"Error calculating cache efficiency: {str(e)}",
         )
 
-async def _prepare_graphql_request(impersonate_user: str, graphql_version: str = None, bearer_token: str = None):
+
+async def _prepare_graphql_request(
+    impersonate_user: str, graphql_version: str = None, bearer_token: str = None
+):
     """
     Prepare common GraphQL request components (URL, headers, token).
 
@@ -1385,10 +1539,11 @@ async def _prepare_graphql_request(impersonate_user: str, graphql_version: str =
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "impersonate_user": impersonate_user,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }
 
     return graphql_url, headers, token
+
 
 def _extract_user_identity_from_token(bearer_token: str) -> str:
     """
@@ -1409,10 +1564,12 @@ def _extract_user_identity_from_token(bearer_token: str) -> str:
 
         # Decode JWT without verification (we only need the payload for cache keying)
         # Format: header.payload.signature
-        parts = token.split('.')
+        parts = token.split(".")
         if len(parts) != 3:
             # Not a valid JWT, fallback to token hash
-            logger.warning("Bearer token is not a valid JWT format, using token hash for cache key")
+            logger.warning(
+                "Bearer token is not a valid JWT format, using token hash for cache key"
+            )
             return hashlib.sha256(token.encode()).hexdigest()[:16]
 
         # Decode payload (base64url)
@@ -1420,39 +1577,53 @@ def _extract_user_identity_from_token(bearer_token: str) -> str:
         # Add padding if needed
         padding = 4 - (len(payload_encoded) % 4)
         if padding != 4:
-            payload_encoded += '=' * padding
+            payload_encoded += "=" * padding
 
-        payload_decoded = json.loads(base64.b64decode(payload_encoded.replace('-', '+').replace('_', '/')))
+        payload_decoded = json.loads(
+            base64.b64decode(payload_encoded.replace("-", "+").replace("_", "/"))
+        )
 
         # Try to extract user identity from common JWT claims
         # Priority: email > upn > unique_name > preferred_username > sub > oid
         user_identity = (
-            payload_decoded.get('email') or
-            payload_decoded.get('upn') or
-            payload_decoded.get('unique_name') or
-            payload_decoded.get('preferred_username') or
-            payload_decoded.get('sub') or
-            payload_decoded.get('oid')
+            payload_decoded.get("email")
+            or payload_decoded.get("upn")
+            or payload_decoded.get("unique_name")
+            or payload_decoded.get("preferred_username")
+            or payload_decoded.get("sub")
+            or payload_decoded.get("oid")
         )
 
         if user_identity:
-            logger.debug(f"Extracted user identity from token for cache key: {user_identity}")
+            logger.debug(
+                f"Extracted user identity from token for cache key: {user_identity}"
+            )
             return str(user_identity)
         else:
             # No recognizable user claim, use token hash
-            logger.warning("Could not extract user identity from JWT claims, using token hash for cache key")
+            logger.warning(
+                "Could not extract user identity from JWT claims, using token hash for cache key"
+            )
             token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
             return token_hash
 
     except Exception as e:
         # If anything goes wrong, fallback to token hash
-        logger.warning(f"Error extracting user identity from token: {e}, using token hash for cache key")
+        logger.warning(
+            f"Error extracting user identity from token: {e}, using token hash for cache key"
+        )
         token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
         return hashlib.sha256(token.encode()).hexdigest()[:16]
 
-async def _execute_graphql_request_cached(query: str, impersonate_user: str,
-                                          variables: dict = None, graphql_version: str = None,
-                                          bearer_token: str = None, use_cache: bool = True) -> dict:
+
+async def _execute_graphql_request_cached(
+    query: str,
+    impersonate_user: str,
+    variables: dict = None,
+    graphql_version: str = None,
+    bearer_token: str = None,
+    use_cache: bool = True,
+) -> dict:
     """
     Execute a GraphQL request with caching support.
 
@@ -1473,11 +1644,15 @@ async def _execute_graphql_request_cached(query: str, impersonate_user: str,
     is_mutation = "mutation" in query.lower()
 
     # Determine if we should use cache
-    should_use_cache = CACHE_ENABLED and cache is not None and use_cache and not is_mutation
+    should_use_cache = (
+        CACHE_ENABLED and cache is not None and use_cache and not is_mutation
+    )
 
     # Extract user identity from bearer token for user-specific caching
     # This prevents users from accessing each other's cached data
-    user_identity = _extract_user_identity_from_token(bearer_token) if bearer_token else "anonymous"
+    user_identity = (
+        _extract_user_identity_from_token(bearer_token) if bearer_token else "anonymous"
+    )
 
     # Create cache key parameters - INCLUDES USER IDENTITY for security
     cache_params = {
@@ -1485,7 +1660,7 @@ async def _execute_graphql_request_cached(query: str, impersonate_user: str,
         "impersonate_user": impersonate_user,
         "variables": variables or {},
         "version": graphql_version or "3.0",
-        "user_identity": user_identity  # CRITICAL: Ensures cache is user-specific
+        "user_identity": user_identity,  # CRITICAL: Ensures cache is user-specific
     }
 
     endpoint = "graphql"
@@ -1513,14 +1688,19 @@ async def _execute_graphql_request_cached(query: str, impersonate_user: str,
     result["_cache_metadata"] = {
         "cached": False,
         "cache_enabled": CACHE_ENABLED,
-        "cache_used": should_use_cache
+        "cache_used": should_use_cache,
     }
 
     return result
 
-async def _execute_graphql_request(query: str, impersonate_user: str,
-                                 variables: dict = None, graphql_version: str = None,
-                                 bearer_token: str = None) -> dict:
+
+async def _execute_graphql_request(
+    query: str,
+    impersonate_user: str,
+    variables: dict = None,
+    graphql_version: str = None,
+    bearer_token: str = None,
+) -> dict:
     """
     Execute a GraphQL request with common setup and error handling.
 
@@ -1545,10 +1725,14 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
         if variables:
             payload["variables"] = variables
 
-        logger.debug(f"GraphQL Request to {graphql_url} with impersonation of {impersonate_user}")
+        logger.debug(
+            f"GraphQL Request to {graphql_url} with impersonation of {impersonate_user}"
+        )
         # Execute request
         async with httpx.AsyncClient() as client:
-            response = await client.post(graphql_url, json=payload, headers=headers, timeout=30.0)
+            response = await client.post(
+                graphql_url, json=payload, headers=headers, timeout=30.0
+            )
 
             # Capture raw HTTP details for debugging
             raw_request_body = json.dumps(payload, indent=2)
@@ -1562,7 +1746,7 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
                     "endpoint": graphql_url,
                     "raw_request_body": raw_request_body,
                     "raw_response_body": raw_response_body,
-                    "request_headers": dict(headers)
+                    "request_headers": dict(headers),
                 }
             else:
                 return {
@@ -1572,20 +1756,23 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
                     "endpoint": graphql_url,
                     "raw_request_body": raw_request_body,
                     "raw_response_body": raw_response_body,
-                    "request_headers": dict(headers)
+                    "request_headers": dict(headers),
                 }
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__
-        }
+        return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
 
 @with_function_logging
 @mcp.tool()
-async def get_access_requests(impersonate_user: str, bearer_token: str, filter_field: str = None, filter_value: str = None,
-                              summary_mode: bool = True, use_cache: bool = True) -> str:
+async def get_access_requests(
+    impersonate_user: str,
+    bearer_token: str,
+    filter_field: str = None,
+    filter_value: str = None,
+    summary_mode: bool = True,
+    use_cache: bool = True,
+) -> str:
     """Get access requests from Omada GraphQL API using user impersonation.
 
     Args:
@@ -1601,7 +1788,9 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
         JSON string containing access requests data
     """
     try:
-        logger.debug(f"Getting access requests for user: {impersonate_user}, filter: {filter_field}={filter_value if filter_field else 'none'}")
+        logger.debug(
+            f"Getting access requests for user: {impersonate_user}, filter: {filter_field}={filter_value if filter_field else 'none'}"
+        )
 
         # Build GraphQL query
         if filter_field and filter_value:
@@ -1654,20 +1843,24 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
 }"""
 
         # Execute GraphQL request WITH CACHING
-        result = await _execute_graphql_request_cached(query, impersonate_user, bearer_token=bearer_token, use_cache=use_cache)
+        result = await _execute_graphql_request_cached(
+            query, impersonate_user, bearer_token=bearer_token, use_cache=use_cache
+        )
 
         if result["success"]:
             data = result["data"]
             # Extract and format the response
-            if 'data' in data and 'accessRequests' in data['data']:
-                access_requests_obj = data['data']['accessRequests']
-                total = access_requests_obj.get('total', 0)
-                access_requests = access_requests_obj.get('data', [])
+            if "data" in data and "accessRequests" in data["data"]:
+                access_requests_obj = data["data"]["accessRequests"]
+                total = access_requests_obj.get("total", 0)
+                access_requests = access_requests_obj.get("data", [])
 
                 # Apply summarization if requested
                 response_data = access_requests
                 if summary_mode:
-                    response_data = _summarize_graphql_data(access_requests, "AccessRequest")
+                    response_data = _summarize_graphql_data(
+                        access_requests, "AccessRequest"
+                    )
 
                 return build_success_response(
                     data={"access_requests": response_data},
@@ -1675,15 +1868,17 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
                     impersonated_user=impersonate_user,
                     total_requests=total,
                     requests_returned=len(response_data),
-                    filter_applied=f"{filter_field}={filter_value}" if filter_field else "none",
-                    summary_mode=summary_mode
+                    filter_applied=(
+                        f"{filter_field}={filter_value}" if filter_field else "none"
+                    ),
+                    summary_mode=summary_mode,
                 )
             else:
                 return build_error_response(
                     error_type="DataError",
                     message="No access requests data found in response",
                     impersonated_user=impersonate_user,
-                    raw_response=data
+                    raw_response=data,
                 )
         else:
             # Handle GraphQL request failure using helper
@@ -1691,20 +1886,28 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
                 message=f"GraphQL request failed with status {result.get('status_code', 'unknown')}",
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
     except Exception as e:
         return build_error_response(
             error_type=type(e).__name__,
             message=f"Error getting access requests: {str(e)}",
-            impersonated_user=impersonate_user
+            impersonated_user=impersonate_user,
         )
+
 
 @with_function_logging
 @mcp.tool()
-async def create_access_request(impersonate_user: str, bearer_token: str, reason: str, context: str,
-                              resources: str, valid_from: str = None, valid_to: str = None) -> str:
+async def create_access_request(
+    impersonate_user: str,
+    bearer_token: str,
+    reason: str,
+    context: str,
+    resources: str,
+    valid_from: str = None,
+    valid_to: str = None,
+) -> str:
     """Create an access request using GraphQL mutation.
 
     IMPORTANT: This function requires 4 mandatory parameters. If any are missing,
@@ -1740,7 +1943,7 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
             impersonate_user=impersonate_user,
             reason=reason,
             context=context,
-            resources=resources
+            resources=resources,
         )
         if error:
             return error
@@ -1748,20 +1951,24 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
         # Get identity ID from the impersonate_user email
         logger.debug(f"Looking up identity ID for email: {impersonate_user}")
         identity_result = await query_omada_identity(
-            field_filters=[{"field": "EMAIL", "value": impersonate_user, "operator": "eq"}],
+            field_filters=[
+                {"field": "EMAIL", "value": impersonate_user, "operator": "eq"}
+            ],
             select_fields="UId",
             top=1,
-            bearer_token=bearer_token
+            bearer_token=bearer_token,
         )
 
         # Parse the identity lookup result
         try:
             identity_data = json.loads(identity_result)
-            if identity_data.get("status") != "success" or not identity_data.get("data", {}).get("value"):
+            if identity_data.get("status") != "success" or not identity_data.get(
+                "data", {}
+            ).get("value"):
                 return build_error_response(
                     error_type="IdentityLookupError",
                     message=f"Could not find identity for email: {impersonate_user}",
-                    lookup_result=identity_data
+                    lookup_result=identity_data,
                 )
 
             identity_entity = identity_data["data"]["value"][0]
@@ -1771,7 +1978,7 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                 return build_error_response(
                     error_type="IdentityLookupError",
                     message=f"Identity found but no ID available for email: {impersonate_user}",
-                    identity_data=identity_entity
+                    identity_data=identity_entity,
                 )
 
             logger.debug(f"Found identity ID: {identity_id} for {impersonate_user}")
@@ -1780,12 +1987,12 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
             return build_error_response(
                 error_type="IdentityLookupParseError",
                 message=f"Failed to parse identity lookup result: {str(e)}",
-                raw_result=identity_result
+                raw_result=identity_result,
             )
 
         # Build the GraphQL mutation with template variables filled in
-        valid_from_clause = f'validFrom: "{valid_from}",' if valid_from else ''
-        valid_to_clause = f'validTo: "{valid_to}",' if valid_to else ''
+        valid_from_clause = f'validFrom: "{valid_from}",' if valid_from else ""
+        valid_to_clause = f'validTo: "{valid_to}",' if valid_to else ""
         context_clause = f'context: "{context}",'
 
         mutation = f"""mutation CreateAccessRequest {{
@@ -1815,7 +2022,7 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
         validTo
     }}
 }}"""
-        
+
         logger.debug(f"Prepared GraphQL mutation:\n{mutation}")
 
         # Execute the GraphQL mutation (use version 1.1 for access request creation)
@@ -1823,19 +2030,23 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
             query=mutation,
             impersonate_user=impersonate_user,
             graphql_version="1.1",
-            bearer_token=bearer_token
+            bearer_token=bearer_token,
         )
 
         if result["success"]:
             data = result["data"]
 
             # Debug: Print the actual response structure
-            logger.debug(f"GraphQL Response Data Structure: {json.dumps(data, indent=2)}")
+            logger.debug(
+                f"GraphQL Response Data Structure: {json.dumps(data, indent=2)}"
+            )
 
             # Check if mutation was successful and extract the created access request ID
             if "data" in data and "createAccessRequest" in data["data"]:
                 create_request_response = data["data"]["createAccessRequest"]
-                logger.debug(f"CreateAccessRequest Response: {json.dumps(create_request_response, indent=2)}")
+                logger.debug(
+                    f"CreateAccessRequest Response: {json.dumps(create_request_response, indent=2)}"
+                )
 
                 # Handle both single object and array responses
                 if isinstance(create_request_response, list):
@@ -1850,8 +2061,8 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                             http_debug={
                                 "raw_request_body": result.get("raw_request_body"),
                                 "raw_response_body": result.get("raw_response_body"),
-                                "request_headers": result.get("request_headers")
-                            }
+                                "request_headers": result.get("request_headers"),
+                            },
                         )
                 else:
                     access_request_data = create_request_response
@@ -1865,7 +2076,7 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                             "status": access_request_data.get("status"),
                             "resource": access_request_data.get("resource"),
                             "validFrom": access_request_data.get("validFrom"),
-                            "validTo": access_request_data.get("validTo")
+                            "validTo": access_request_data.get("validTo"),
                         },
                         "request_details": {
                             "reason": reason,
@@ -1874,18 +2085,18 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                             "resources": resources,
                             "valid_from": valid_from,
                             "valid_to": valid_to,
-                            "context": context
+                            "context": context,
                         },
                         "http_debug": {
                             "raw_request_body": result.get("raw_request_body"),
                             "raw_response_body": result.get("raw_response_body"),
-                            "request_headers": result.get("request_headers")
-                        }
+                            "request_headers": result.get("request_headers"),
+                        },
                     },
                     endpoint=result["endpoint"],
                     message="Access request created successfully",
                     impersonated_user=impersonate_user,
-                    access_request_id=access_request_id
+                    access_request_id=access_request_id,
                 )
             elif "errors" in data:
                 # Handle GraphQL errors
@@ -1898,8 +2109,8 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                     http_debug={
                         "raw_request_body": result.get("raw_request_body"),
                         "raw_response_body": result.get("raw_response_body"),
-                        "request_headers": result.get("request_headers")
-                    }
+                        "request_headers": result.get("request_headers"),
+                    },
                 )
             else:
                 return build_error_response(
@@ -1910,8 +2121,8 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                     http_debug={
                         "raw_request_body": result.get("raw_request_body"),
                         "raw_response_body": result.get("raw_response_body"),
-                        "request_headers": result.get("request_headers")
-                    }
+                        "request_headers": result.get("request_headers"),
+                    },
                 )
         else:
             # Handle HTTP request failure using helper
@@ -1923,22 +2134,28 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                 http_debug={
                     "raw_request_body": result.get("raw_request_body"),
                     "raw_response_body": result.get("raw_response_body"),
-                    "request_headers": result.get("request_headers")
-                }
+                    "request_headers": result.get("request_headers"),
+                },
             )
 
     except Exception as e:
         return build_error_response(
             error_type=type(e).__name__,
             message=f"Error creating access request: {str(e)}",
-            impersonated_user=impersonate_user
+            impersonated_user=impersonate_user,
         )
+
 
 @with_function_logging
 @mcp.tool()
-async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str, bearer_token: str,
-                                       system_id: str = None, context_id: str = None,
-                                       resource_name: str = None) -> str:
+async def get_resources_for_beneficiary(
+    identity_id: str,
+    impersonate_user: str,
+    bearer_token: str,
+    system_id: str = None,
+    context_id: str = None,
+    resource_name: str = None,
+) -> str:
     """
     Get resources available for an ACCESS REQUEST for a specific user/identity using Omada GraphQL API.
 
@@ -1990,7 +2207,9 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
     """
     try:
         # Validate mandatory fields using helper
-        error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
+        error = validate_required_fields(
+            identity_id=identity_id, impersonate_user=impersonate_user
+        )
         if error:
             return error
 
@@ -1999,9 +2218,9 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
             return build_error_response(
                 error_type="ValidationError",
                 message=f"Invalid identity_id: '{identity_id}' appears to be an integer Id field, but this function requires the UId field (32-character UUID). "
-                        f"When you query an Identity, you get both 'Id' (integer like 1006715) and 'UId' (UUID like 'e3e869c4-369a-476e-a969-d57059d0b1e4'). "
-                        f"You MUST use the UId field, not the Id field.",
-                hint="Query the identity first, then extract the 'UId' field (not 'Id') from the response"
+                f"When you query an Identity, you get both 'Id' (integer like 1006715) and 'UId' (UUID like 'e3e869c4-369a-476e-a969-d57059d0b1e4'). "
+                f"You MUST use the UId field, not the Id field.",
+                hint="Query the identity first, then extract the 'UId' field (not 'Id') from the response",
             )
 
         # Build the filters object dynamically based on provided parameters
@@ -2053,9 +2272,11 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
         if result["success"]:
             data = result["data"]
             # Extract resources from the GraphQL response
-            if ('data' in data and 'accessRequestComponents' in data['data']):
-                access_request_components = data['data']['accessRequestComponents']
-                resources = access_request_components.get('resources', {}).get('data', [])
+            if "data" in data and "accessRequestComponents" in data["data"]:
+                access_request_components = data["data"]["accessRequestComponents"]
+                resources = access_request_components.get("resources", {}).get(
+                    "data", []
+                )
 
                 return build_success_response(
                     data=resources,
@@ -2065,7 +2286,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                     system_id=system_id,
                     context_id=context_id,
                     resources_count=len(resources),
-                    resources=resources
+                    resources=resources,
                 )
             else:
                 return build_error_response(
@@ -2073,7 +2294,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                     message="No resources found in response",
                     beneficiary_id=identity_id,
                     impersonated_user=impersonate_user,
-                    response=data
+                    response=data,
                 )
         else:
             # Handle GraphQL request failure using helper
@@ -2081,7 +2302,7 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
                 beneficiary_id=identity_id,
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
     except Exception as e:
@@ -2089,15 +2310,20 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
             error_type=type(e).__name__,
             message=str(e),
             beneficiary_id=identity_id,
-            impersonated_user=impersonate_user
+            impersonated_user=impersonate_user,
         )
 
 
 @with_function_logging
 @mcp.tool()
-async def get_requestable_resources(identity_id: str, impersonate_user: str, bearer_token: str,
-                                   system_id: str = None, context_id: str = None,
-                                   resource_name: str = None) -> str:
+async def get_requestable_resources(
+    identity_id: str,
+    impersonate_user: str,
+    bearer_token: str,
+    system_id: str = None,
+    context_id: str = None,
+    resource_name: str = None,
+) -> str:
     """
     Get resources that a user can request access to (alias for get_resources_for_beneficiary).
 
@@ -2141,14 +2367,15 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str, bea
         system_id=system_id,
         context_id=context_id,
         resource_name=resource_name,
-        bearer_token=bearer_token
+        bearer_token=bearer_token,
     )
 
 
 @with_function_logging
 @mcp.tool()
-async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: str,
-                                         page: int = None, rows: int = None) -> str:
+async def get_identities_for_beneficiary(
+    impersonate_user: str, bearer_token: str, page: int = None, rows: int = None
+) -> str:
     """
     Get a list of identities available for access requests using Omada GraphQL API.
 
@@ -2177,7 +2404,9 @@ async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: st
         JSON response with identities data including pagination metadata or error message
     """
     # ENTRY LOGGING
-    logger.debug(f"DEBUG: ENTRY - get_identities_for_beneficiary(impersonate_user={impersonate_user}, page={page}, rows={rows})")
+    logger.debug(
+        f"DEBUG: ENTRY - get_identities_for_beneficiary(impersonate_user={impersonate_user}, page={page}, rows={rows})"
+    )
 
     try:
         # Validate mandatory fields using helper
@@ -2221,12 +2450,12 @@ async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: st
         if result["success"]:
             data = result["data"]
             # Extract identities from the GraphQL response
-            if ('data' in data and 'accessRequestComponents' in data['data']):
-                access_request_components = data['data']['accessRequestComponents']
-                identities_obj = access_request_components.get('identities', {})
-                identities = identities_obj.get('data', [])
-                total = identities_obj.get('total', len(identities))
-                pages = identities_obj.get('pages', 1)
+            if "data" in data and "accessRequestComponents" in data["data"]:
+                access_request_components = data["data"]["accessRequestComponents"]
+                identities_obj = access_request_components.get("identities", {})
+                identities = identities_obj.get("data", [])
+                total = identities_obj.get("total", len(identities))
+                pages = identities_obj.get("pages", 1)
 
                 return build_success_response(
                     data=identities,
@@ -2236,51 +2465,55 @@ async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: st
                         "current_page": page,
                         "rows_per_page": rows,
                         "total_identities": total,
-                        "total_pages": pages
+                        "total_pages": pages,
                     },
                     identities_count=len(identities),
-                    identities=identities
+                    identities=identities,
                 )
             else:
                 return build_error_response(
                     error_type="NoIdentitiesFound",
                     message="No identities found in response",
                     impersonated_user=impersonate_user,
-                    response=data
+                    response=data,
                 )
         else:
             # Handle GraphQL request failure using helper
             return build_error_response(
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
     except Exception as e:
         return build_error_response(
             error_type=type(e).__name__,
             message=str(e),
-            impersonated_user=impersonate_user
+            impersonated_user=impersonate_user,
         )
 
 
 @with_function_logging
 @mcp.tool()
-async def get_calculated_assignments_detailed(identity_ids: str, impersonate_user: str, bearer_token: str,
-                                             resource_type_name: str = None,
-                                             resource_type_operator: str = "CONTAINS",
-                                             compliance_status: str = None,
-                                             compliance_status_operator: str = "CONTAINS",
-                                             account_name: str = None,
-                                             account_name_operator: str = "CONTAINS",
-                                             system_name: str = None,
-                                             system_name_operator: str = "CONTAINS",
-                                             identity_name: str = None,
-                                             identity_name_operator: str = "CONTAINS",
-                                             sort_by: str = "RESOURCE_NAME",
-                                             page: int = 1,
-                                             rows: int = 50,
-                                             use_cache: bool = True) -> str:
+async def get_calculated_assignments_detailed(
+    identity_ids: str,
+    impersonate_user: str,
+    bearer_token: str,
+    resource_type_name: str = None,
+    resource_type_operator: str = "CONTAINS",
+    compliance_status: str = None,
+    compliance_status_operator: str = "CONTAINS",
+    account_name: str = None,
+    account_name_operator: str = "CONTAINS",
+    system_name: str = None,
+    system_name_operator: str = "CONTAINS",
+    identity_name: str = None,
+    identity_name_operator: str = "CONTAINS",
+    sort_by: str = "RESOURCE_NAME",
+    page: int = 1,
+    rows: int = 50,
+    use_cache: bool = True,
+) -> str:
     """
     Get detailed calculated assignments with compliance and violation status using Omada GraphQL API.
 
@@ -2384,18 +2617,26 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
     old_level = logger.level
     old_handler_levels = [(handler, handler.level) for handler in logger.handlers]
 
-    func_log_level = os.getenv("LOG_LEVEL_get_calculated_assignments_detailed", LOG_LEVEL).upper()
+    func_log_level = os.getenv(
+        "LOG_LEVEL_get_calculated_assignments_detailed", LOG_LEVEL
+    ).upper()
     new_level = getattr(logging, func_log_level, logging.INFO)
     logger.setLevel(new_level)
     for handler in logger.handlers:
         handler.setLevel(new_level)
 
     # ENTRY LOGGING
-    logger.debug(f"DEBUG: ENTRY - get_calculated_assignments_detailed(identity_ids={identity_ids}, impersonate_user={impersonate_user}, resource_type_name={resource_type_name}, compliance_status={compliance_status}, account_name={account_name}, system_name={system_name}, identity_name={identity_name}, page={page}, rows={rows})")
+    logger.debug(
+        f"DEBUG: ENTRY - get_calculated_assignments_detailed(identity_ids={identity_ids}, impersonate_user={impersonate_user}, resource_type_name={resource_type_name}, compliance_status={compliance_status}, account_name={account_name}, system_name={system_name}, identity_name={identity_name}, page={page}, rows={rows})"
+    )
 
     try:
         # Validate mandatory fields using helper
-        error = validate_required_fields(identity_ids=identity_ids, impersonate_user=impersonate_user, bearer_token=bearer_token)
+        error = validate_required_fields(
+            identity_ids=identity_ids,
+            impersonate_user=impersonate_user,
+            bearer_token=bearer_token,
+        )
         if error:
             return error
 
@@ -2404,14 +2645,14 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
             return build_error_response(
                 error_type="InvalidPaginationParameter",
                 message=f"Invalid page number: {page}. Page must be >= 1.",
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
         if rows < 1 or rows > 1000:
             return build_error_response(
                 error_type="InvalidPaginationParameter",
                 message=f"Invalid rows per page: {rows}. Rows must be between 1 and 1000.",
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
         # Build the filters object dynamically based on provided parameters
@@ -2428,9 +2669,11 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                 return build_error_response(
                     error_type="InvalidOperator",
                     message=f"Invalid resource_type_operator: {resource_type_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user
+                    impersonated_user=impersonate_user,
                 )
-            filters.append(f'resourceTypeName: {{filterValue: "{resource_type_name}", operator: {resource_type_operator}}}')
+            filters.append(
+                f'resourceTypeName: {{filterValue: "{resource_type_name}", operator: {resource_type_operator}}}'
+            )
 
         if compliance_status and compliance_status.strip():
             # Validate operator
@@ -2439,9 +2682,11 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                 return build_error_response(
                     error_type="InvalidOperator",
                     message=f"Invalid compliance_status_operator: {compliance_status_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user
+                    impersonated_user=impersonate_user,
                 )
-            filters.append(f'complianceStatus: {{filterValue: "{compliance_status}", operator: {compliance_status_operator}}}')
+            filters.append(
+                f'complianceStatus: {{filterValue: "{compliance_status}", operator: {compliance_status_operator}}}'
+            )
 
         if account_name and account_name.strip():
             # Validate operator
@@ -2450,9 +2695,11 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                 return build_error_response(
                     error_type="InvalidOperator",
                     message=f"Invalid account_name_operator: {account_name_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user
+                    impersonated_user=impersonate_user,
                 )
-            filters.append(f'accountName: {{filterValue: "{account_name}", operator: {account_name_operator}}}')
+            filters.append(
+                f'accountName: {{filterValue: "{account_name}", operator: {account_name_operator}}}'
+            )
 
         if system_name and system_name.strip():
             # Validate operator
@@ -2461,9 +2708,11 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                 return build_error_response(
                     error_type="InvalidOperator",
                     message=f"Invalid system_name_operator: {system_name_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user
+                    impersonated_user=impersonate_user,
                 )
-            filters.append(f'systemName: {{filterValue: "{system_name}", operator: {system_name_operator}}}')
+            filters.append(
+                f'systemName: {{filterValue: "{system_name}", operator: {system_name_operator}}}'
+            )
 
         if identity_name and identity_name.strip():
             # Validate operator
@@ -2472,24 +2721,33 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                 return build_error_response(
                     error_type="InvalidOperator",
                     message=f"Invalid identity_name_operator: {identity_name_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user
+                    impersonated_user=impersonate_user,
                 )
-            filters.append(f'identityName: {{filterValue: "{identity_name}", operator: {identity_name_operator}}}')
+            filters.append(
+                f'identityName: {{filterValue: "{identity_name}", operator: {identity_name_operator}}}'
+            )
 
         # Join filters
-        filters_string = ', '.join(filters)
+        filters_string = ", ".join(filters)
 
         # Validate sort_by parameter
         valid_sort_options = [
-            "RESOURCE_NAME", "IDENTITY_NAME", "ACCOUNT_NAME", "RESOURCE_TYPE",
-            "COMPLIANCE_STATUS", "SYSTEM_NAME", "VALID_FROM", "VALID_TO",
-            "DISABLED", "VIOLATION_STATUS"
+            "RESOURCE_NAME",
+            "IDENTITY_NAME",
+            "ACCOUNT_NAME",
+            "RESOURCE_TYPE",
+            "COMPLIANCE_STATUS",
+            "SYSTEM_NAME",
+            "VALID_FROM",
+            "VALID_TO",
+            "DISABLED",
+            "VIOLATION_STATUS",
         ]
         if sort_by not in valid_sort_options:
             return build_error_response(
                 error_type="InvalidSortOption",
                 message=f"Invalid sort_by: {sort_by}. Valid values are: {', '.join(valid_sort_options)}",
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
         # Build GraphQL query with the filters and pagination
@@ -2554,17 +2812,17 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
             impersonate_user,
             graphql_version="2.19",
             bearer_token=bearer_token,
-            use_cache=use_cache
+            use_cache=use_cache,
         )
 
         if result["success"]:
             data = result["data"]
             # Extract calculated assignments from the GraphQL response
-            if ('data' in data and 'calculatedAssignments' in data['data']):
-                calculated_assignments = data['data']['calculatedAssignments']
-                assignments_data = calculated_assignments.get('data', [])
-                total = calculated_assignments.get('total', 0)
-                pages = calculated_assignments.get('pages', 0)
+            if "data" in data and "calculatedAssignments" in data["data"]:
+                calculated_assignments = data["data"]["calculatedAssignments"]
+                assignments_data = calculated_assignments.get("data", [])
+                total = calculated_assignments.get("total", 0)
+                pages = calculated_assignments.get("pages", 0)
 
                 return build_success_response(
                     data=assignments_data,
@@ -2578,7 +2836,7 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                     current_page=page,
                     rows_per_page=rows,
                     assignments_returned=len(assignments_data),
-                    assignments=assignments_data
+                    assignments=assignments_data,
                 )
             else:
                 return build_error_response(
@@ -2586,7 +2844,7 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                     message="No calculated assignments found in response",
                     identity_ids=identity_ids,
                     impersonated_user=impersonate_user,
-                    response=data
+                    response=data,
                 )
         else:
             # Handle GraphQL request failure using helper
@@ -2594,7 +2852,7 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
                 identity_ids=identity_ids,
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
     except Exception as e:
@@ -2602,7 +2860,7 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
             error_type=type(e).__name__,
             message=str(e),
             identity_ids=identity_ids,
-            impersonated_user=impersonate_user
+            impersonated_user=impersonate_user,
         )
     finally:
         # Restore logger levels (workaround for decorator not working)
@@ -2613,7 +2871,9 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
 
 @with_function_logging
 @mcp.tool()
-async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_token: str) -> str:
+async def get_identity_contexts(
+    identity_id: str, impersonate_user: str, bearer_token: str
+) -> str:
     """
     Get contexts for a specific identity using Omada GraphQL API.
 
@@ -2654,16 +2914,24 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
         - Finance Department: id="e5f6g7h8-..."
     """
     # ENTRY LOGGING
-    logger.debug(f"DEBUG: ENTRY - get_identity_contexts(identity_id={identity_id}, impersonate_user={impersonate_user})")
+    logger.debug(
+        f"DEBUG: ENTRY - get_identity_contexts(identity_id={identity_id}, impersonate_user={impersonate_user})"
+    )
 
     # Validate mandatory fields
-    error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
+    error = validate_required_fields(
+        identity_id=identity_id, impersonate_user=impersonate_user
+    )
     if error:
         return error
 
     try:
-        logger.debug(f"get_identity_contexts called with identity_id={identity_id}, impersonate_user={impersonate_user}")
-        logger.debug(f"Validation passed, building GraphQL query for identity_id: {identity_id}")
+        logger.debug(
+            f"get_identity_contexts called with identity_id={identity_id}, impersonate_user={impersonate_user}"
+        )
+        logger.debug(
+            f"Validation passed, building GraphQL query for identity_id: {identity_id}"
+        )
 
         # Build GraphQL query with the provided identity_id
         query = f"""query GetContextsForIdentity {{
@@ -2686,9 +2954,9 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
         if result["success"]:
             data = result["data"]
             # Extract contexts from the GraphQL response
-            if ('data' in data and 'accessRequestComponents' in data['data']):
-                access_request_components = data['data']['accessRequestComponents']
-                contexts = access_request_components.get('contexts', [])
+            if "data" in data and "accessRequestComponents" in data["data"]:
+                access_request_components = data["data"]["accessRequestComponents"]
+                contexts = access_request_components.get("contexts", [])
 
                 return build_success_response(
                     data=contexts,
@@ -2696,7 +2964,7 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
                     identity_id=identity_id,
                     impersonated_user=impersonate_user,
                     contexts_count=len(contexts),
-                    contexts=contexts
+                    contexts=contexts,
                 )
             else:
                 return build_error_response(
@@ -2704,7 +2972,7 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
                     message="No contexts found in response",
                     identity_id=identity_id,
                     impersonated_user=impersonate_user,
-                    response=data
+                    response=data,
                 )
         else:
             # Handle GraphQL request failure
@@ -2712,7 +2980,7 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
                 identity_id=identity_id,
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
     except Exception as e:
@@ -2720,15 +2988,18 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
             error_type=type(e).__name__,
             message=str(e),
             identity_id=identity_id,
-            impersonated_user=impersonate_user
+            impersonated_user=impersonate_user,
         )
 
 
 @with_function_logging
 @mcp.tool()
-async def get_pending_approvals(impersonate_user: str, bearer_token: str,
-                                workflow_step: str = None,
-                                summary_mode: bool = True) -> str:
+async def get_pending_approvals(
+    impersonate_user: str,
+    bearer_token: str,
+    workflow_step: str = None,
+    summary_mode: bool = True,
+) -> str:
     """
     Get pending approval survey questions from Omada GraphQL API.
 
@@ -2762,7 +3033,9 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
         or error message if the request fails
     """
     # ENTRY LOGGING
-    logger.debug(f"DEBUG: ENTRY - get_pending_approvals(impersonate_user={impersonate_user}, workflow_step={workflow_step}, summary_mode={summary_mode})")
+    logger.debug(
+        f"DEBUG: ENTRY - get_pending_approvals(impersonate_user={impersonate_user}, workflow_step={workflow_step}, summary_mode={summary_mode})"
+    )
 
     try:
         # Validate mandatory fields using helper
@@ -2771,17 +3044,25 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
             return error
 
         # Validate workflow_step if provided
-        valid_workflow_steps = ["ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval"]
+        valid_workflow_steps = [
+            "ManagerApproval",
+            "ResourceOwnerApproval",
+            "SystemOwnerApproval",
+        ]
         if workflow_step and workflow_step not in valid_workflow_steps:
             return build_error_response(
                 error_type="ValidationError",
                 message=f"Invalid workflow_step '{workflow_step}'. Must be one of: {', '.join(valid_workflow_steps)}",
                 impersonated_user=impersonate_user,
-                workflow_step_filter=workflow_step
+                workflow_step_filter=workflow_step,
             )
 
         # Build filter clause conditionally
-        filter_clause = f'(filters: {{workflowStep: {{filterValue: "{workflow_step}", operator: EQUALS}}}})' if workflow_step else ''
+        filter_clause = (
+            f'(filters: {{workflowStep: {{filterValue: "{workflow_step}", operator: EQUALS}}}})'
+            if workflow_step
+            else ""
+        )
 
         # Build GraphQL query with conditional filter
         query = f"""query myAccessRequestApprovalSurveyQuestions {{
@@ -2821,25 +3102,38 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
             impersonate_user,
             graphql_version="3.0",
             bearer_token=bearer_token,
-            use_cache=True
+            use_cache=True,
         )
 
         if result["success"]:
             data = result["data"]
             # Extract approval questions from the GraphQL response
-            if ('data' in data and 'accessRequestApprovalSurveyQuestions' in data['data']):
-                approval_questions = data['data']['accessRequestApprovalSurveyQuestions']
-                questions_data = approval_questions.get('data', [])
-                total = approval_questions.get('total', 0)
-                pages = approval_questions.get('pages', 0)
+            if (
+                "data" in data
+                and "accessRequestApprovalSurveyQuestions" in data["data"]
+            ):
+                approval_questions = data["data"][
+                    "accessRequestApprovalSurveyQuestions"
+                ]
+                questions_data = approval_questions.get("data", [])
+                total = approval_questions.get("total", 0)
+                pages = approval_questions.get("pages", 0)
 
                 # Apply summarization if requested
                 response_data = questions_data
                 if summary_mode:
-                    logger.debug(f"Applying summarization to {len(questions_data)} pending approvals")
-                    logger.debug(f"Original data fields: {list(questions_data[0].keys()) if questions_data else []}")
-                    response_data = _summarize_graphql_data(questions_data, "PendingApproval")
-                    logger.debug(f"Summarized data fields: {list(response_data[0].keys()) if response_data else []}")
+                    logger.debug(
+                        f"Applying summarization to {len(questions_data)} pending approvals"
+                    )
+                    logger.debug(
+                        f"Original data fields: {list(questions_data[0].keys()) if questions_data else []}"
+                    )
+                    response_data = _summarize_graphql_data(
+                        questions_data, "PendingApproval"
+                    )
+                    logger.debug(
+                        f"Summarized data fields: {list(response_data[0].keys()) if response_data else []}"
+                    )
 
                 return build_success_response(
                     data=response_data,
@@ -2850,7 +3144,7 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
                     pages=pages,
                     approvals_returned=len(response_data),
                     summary_mode=summary_mode,
-                    approvals=response_data
+                    approvals=response_data,
                 )
             else:
                 return build_error_response(
@@ -2858,7 +3152,7 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
                     message="No pending approvals found in response",
                     impersonated_user=impersonate_user,
                     workflow_step_filter=workflow_step if workflow_step else "none",
-                    response=data
+                    response=data,
                 )
         else:
             # Handle GraphQL request failure using helper
@@ -2866,7 +3160,7 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
                 impersonated_user=impersonate_user,
-                workflow_step_filter=workflow_step if workflow_step else "none"
+                workflow_step_filter=workflow_step if workflow_step else "none",
             )
 
     except Exception as e:
@@ -2874,14 +3168,15 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
             error_type=type(e).__name__,
             message=str(e),
             impersonated_user=impersonate_user,
-            workflow_step_filter=workflow_step if workflow_step else "none"
+            workflow_step_filter=workflow_step if workflow_step else "none",
         )
 
 
 @with_function_logging
 @mcp.tool()
-async def get_approval_details(impersonate_user: str, bearer_token: str,
-                               workflow_step: str = None) -> str:
+async def get_approval_details(
+    impersonate_user: str, bearer_token: str, workflow_step: str = None
+) -> str:
     """
     Get FULL approval details including technical IDs (surveyId, surveyObjectKey) needed for making decisions.
 
@@ -2901,21 +3196,28 @@ async def get_approval_details(impersonate_user: str, bearer_token: str,
         JSON response with FULL approval details including surveyId and surveyObjectKey
     """
     # ENTRY LOGGING
-    logger.debug(f"DEBUG: ENTRY - get_approval_details(impersonate_user={impersonate_user}, workflow_step={workflow_step})")
+    logger.debug(
+        f"DEBUG: ENTRY - get_approval_details(impersonate_user={impersonate_user}, workflow_step={workflow_step})"
+    )
 
     # Call get_pending_approvals with summary_mode=False to get all fields
     return await get_pending_approvals(
         impersonate_user=impersonate_user,
         bearer_token=bearer_token,
         workflow_step=workflow_step,
-        summary_mode=False  # Get full details including technical IDs
+        summary_mode=False,  # Get full details including technical IDs
     )
 
 
 @with_function_logging
 @mcp.tool()
-async def make_approval_decision(impersonate_user: str, survey_id: str,
-                                 survey_object_key: str, decision: str, bearer_token: str) -> str:
+async def make_approval_decision(
+    impersonate_user: str,
+    survey_id: str,
+    survey_object_key: str,
+    decision: str,
+    bearer_token: str,
+) -> str:
     """
     Make an approval decision (APPROVE or REJECT) for an access request using Omada GraphQL API.
 
@@ -2955,7 +3257,7 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
             impersonate_user=impersonate_user,
             survey_id=survey_id,
             survey_object_key=survey_object_key,
-            decision=decision
+            decision=decision,
         )
         if error:
             return error
@@ -2966,7 +3268,7 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
         if decision_upper not in valid_decisions:
             return build_error_response(
                 error_type="ValidationError",
-                message=f"Invalid decision '{decision}'. Must be one of: {', '.join(valid_decisions)}"
+                message=f"Invalid decision '{decision}'. Must be one of: {', '.join(valid_decisions)}",
             )
 
         # Build GraphQL mutation
@@ -2991,15 +3293,17 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
             query=mutation,
             impersonate_user=impersonate_user,
             graphql_version="3.0",
-            bearer_token=bearer_token
+            bearer_token=bearer_token,
         )
 
         if result["success"]:
             data = result["data"]
             # Extract submission result from the GraphQL response
-            if ('data' in data and 'submitRequestQuestions' in data['data']):
-                submission_result = data['data']['submitRequestQuestions']
-                questions_submitted = submission_result.get('questionsSuccessfullySubmitted', False)
+            if "data" in data and "submitRequestQuestions" in data["data"]:
+                submission_result = data["data"]["submitRequestQuestions"]
+                questions_submitted = submission_result.get(
+                    "questionsSuccessfullySubmitted", False
+                )
 
                 return build_success_response(
                     data={"questions_successfully_submitted": questions_submitted},
@@ -3007,7 +3311,7 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
                     impersonated_user=impersonate_user,
                     survey_id=survey_id,
                     survey_object_key=survey_object_key,
-                    decision=decision_upper
+                    decision=decision_upper,
                 )
             elif "errors" in data:
                 # Handle GraphQL errors
@@ -3019,7 +3323,7 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
                     survey_object_key=survey_object_key,
                     decision=decision_upper,
                     errors=data["errors"],
-                    endpoint=result["endpoint"]
+                    endpoint=result["endpoint"],
                 )
             else:
                 return build_error_response(
@@ -3029,7 +3333,7 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
                     survey_id=survey_id,
                     survey_object_key=survey_object_key,
                     decision=decision_upper,
-                    response=data
+                    response=data,
                 )
         else:
             # Handle GraphQL request failure using helper
@@ -3039,7 +3343,7 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
                 impersonated_user=impersonate_user,
                 survey_id=survey_id,
                 survey_object_key=survey_object_key,
-                decision=decision_upper
+                decision=decision_upper,
             )
 
     except Exception as e:
@@ -3047,15 +3351,19 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
             error_type=type(e).__name__,
             message=str(e),
             impersonated_user=impersonate_user,
-            survey_id=survey_id if 'survey_id' in locals() else "N/A",
-            survey_object_key=survey_object_key if 'survey_object_key' in locals() else "N/A",
-            decision=decision if 'decision' in locals() else "N/A"
+            survey_id=survey_id if "survey_id" in locals() else "N/A",
+            survey_object_key=(
+                survey_object_key if "survey_object_key" in locals() else "N/A"
+            ),
+            decision=decision if "decision" in locals() else "N/A",
         )
 
 
 @with_function_logging
 @mcp.tool()
-async def get_compliance_workbench_survey_and_compliance_status(impersonate_user: str, bearer_token: str) -> str:
+async def get_compliance_workbench_survey_and_compliance_status(
+    impersonate_user: str, bearer_token: str
+) -> str:
     """
     Get compliance workbench configuration including compliance status values and survey templates from Omada GraphQL API.
 
@@ -3107,48 +3415,48 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
             impersonate_user,
             omada_base_url,
             graphql_version="3.0",
-            bearer_token=bearer_token
+            bearer_token=bearer_token,
         )
 
         if result["success"]:
             data = result["data"]
             # Extract compliance workbench configuration from the GraphQL response
-            if ('data' in data and 'complianceWorkbenchConfiguration' in data['data']):
-                config = data['data']['complianceWorkbenchConfiguration']
+            if "data" in data and "complianceWorkbenchConfiguration" in data["data"]:
+                config = data["data"]["complianceWorkbenchConfiguration"]
 
-                compliance_status = config.get('complianceStatus', [])
-                survey_templates = config.get('surveyTemplates', [])
+                compliance_status = config.get("complianceStatus", [])
+                survey_templates = config.get("surveyTemplates", [])
 
                 return build_success_response(
                     data={
                         "compliance_status": compliance_status,
-                        "survey_templates": survey_templates
+                        "survey_templates": survey_templates,
                     },
                     endpoint=result["endpoint"],
                     impersonated_user=impersonate_user,
                     compliance_status_count=len(compliance_status),
-                    survey_templates_count=len(survey_templates)
+                    survey_templates_count=len(survey_templates),
                 )
             else:
                 return build_error_response(
                     error_type="NoConfigurationFound",
                     message="No compliance workbench configuration found in response",
                     impersonated_user=impersonate_user,
-                    response=data
+                    response=data,
                 )
         else:
             # Handle GraphQL request failure using helper
             return build_error_response(
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
-                impersonated_user=impersonate_user
+                impersonated_user=impersonate_user,
             )
 
     except Exception as e:
         return build_error_response(
             error_type=type(e).__name__,
             message=str(e),
-            impersonated_user=impersonate_user
+            impersonated_user=impersonate_user,
         )
 
 

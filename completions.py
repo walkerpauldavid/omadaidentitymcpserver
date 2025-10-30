@@ -3,6 +3,7 @@
 # Completions provide autocomplete suggestions for function arguments,
 # helping users discover valid values for parameters.
 
+
 def register_completions(mcp):
     """Register all MCP completions with the FastMCP server."""
 
@@ -29,7 +30,7 @@ def register_completions(mcp):
                 "workday-system",
                 "servicenow-system",
                 "google-workspace-system",
-                "okta-system"
+                "okta-system",
             ]
 
         # Resource Type Name completions
@@ -54,7 +55,7 @@ def register_completions(mcp):
                 "Exchange - Mailbox Permission",
                 "Network Share - Folder Permission",
                 "VPN Access",
-                "Application Access"
+                "Application Access",
             ]
 
         # Identity Field Name completions (for OData queries)
@@ -81,21 +82,21 @@ def register_completions(mcp):
                 "MOBILENUMBER",
                 "OFFICE",
                 "DIVISION",
-                "BUSINESSUNIT"
+                "BUSINESSUNIT",
             ]
 
         # OData Operator completions
         if argument_name in ["operator", "filter_operator"]:
             return [
-                "eq",           # equals
-                "ne",           # not equals
-                "gt",           # greater than
-                "ge",           # greater than or equal
-                "lt",           # less than
-                "le",           # less than or equal
-                "contains",     # contains substring
-                "startswith",   # starts with
-                "endswith"      # ends with
+                "eq",  # equals
+                "ne",  # not equals
+                "gt",  # greater than
+                "ge",  # greater than or equal
+                "lt",  # less than
+                "le",  # less than or equal
+                "contains",  # contains substring
+                "startswith",  # starts with
+                "endswith",  # ends with
             ]
 
         # Compliance Status completions
@@ -105,7 +106,7 @@ def register_completions(mcp):
                 "NOT APPROVED",
                 "VIOLATION",
                 "PENDING",
-                "REVIEW REQUIRED"
+                "REVIEW REQUIRED",
             ]
 
         # Workflow Step completions
@@ -115,7 +116,7 @@ def register_completions(mcp):
                 "ResourceOwnerApproval",
                 "SystemOwnerApproval",
                 "ComplianceApproval",
-                "SecurityApproval"
+                "SecurityApproval",
             ]
 
         # Status completions (for access requests)
@@ -126,10 +127,12 @@ def register_completions(mcp):
                 "REJECTED",
                 "CANCELLED",
                 "IN_PROGRESS",
-                "COMPLETED"
+                "COMPLETED",
             ]
 
         # Return empty list if no completions available
         return []
 
-    print("Registered MCP completions for: system_id, resource_type_name, field names, operators, compliance_status, workflow_step, status")
+    print(
+        "Registered MCP completions for: system_id, resource_type_name, field names, operators, compliance_status, workflow_step, status"
+    )

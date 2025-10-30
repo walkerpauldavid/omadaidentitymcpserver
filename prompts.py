@@ -3,6 +3,7 @@
 # Prompts help guide Claude through complex workflows by providing
 # templates and examples for common Omada operations.
 
+
 def register_prompts(mcp):
     """Register all MCP prompts with the FastMCP server."""
 
@@ -735,4 +736,6 @@ I'll highlight:
 4. Email address to impersonate for the queries
 """
 
-    print("Registered 11 MCP prompts: request_access_workflow, approve_requests_workflow, search_identity_workflow, review_assignments_workflow, authentication_workflow, troubleshooting_workflow, bulk_access_request_workflow, compliance_audit_workflow, resource_discovery_workflow, identity_context_workflow, compare_identities_workflow")
+    print(
+        "Registered 11 MCP prompts: request_access_workflow, approve_requests_workflow, search_identity_workflow, review_assignments_workflow, authentication_workflow, troubleshooting_workflow, bulk_access_request_workflow, compliance_audit_workflow, resource_discovery_workflow, identity_context_workflow, compare_identities_workflow"
+    )

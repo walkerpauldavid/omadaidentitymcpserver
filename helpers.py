@@ -32,20 +32,22 @@ def validate_required_fields(**kwargs) -> Optional[str]:
             return error
     """
     for field_name, field_value in kwargs.items():
-        if field_value is None or (isinstance(field_value, str) and not field_value.strip()):
-            return json.dumps({
-                "status": "error",
-                "message": f"Missing required field: {field_name}",
-                "error_type": "ValidationError"
-            }, indent=2)
+        if field_value is None or (
+            isinstance(field_value, str) and not field_value.strip()
+        ):
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Missing required field: {field_name}",
+                    "error_type": "ValidationError",
+                },
+                indent=2,
+            )
     return None
 
 
 def build_error_response(
-    error_type: str,
-    result: dict = None,
-    message: str = None,
-    **extra_fields
+    error_type: str, result: dict = None, message: str = None, **extra_fields
 ) -> str:
     """
     Build standardized error response in JSON format.
@@ -74,11 +76,7 @@ def build_error_response(
             impersonated_user=impersonate_user
         )
     """
-    error_result = {
-        "status": "error",
-        "error_type": error_type,
-        **extra_fields
-    }
+    error_result = {"status": "error", "error_type": error_type, **extra_fields}
 
     # Add custom message if provided
     if message:
@@ -99,11 +97,7 @@ def build_error_response(
     return json.dumps(error_result, indent=2)
 
 
-def build_success_response(
-    data: Any = None,
-    endpoint: str = None,
-    **context
-) -> str:
+def build_success_response(data: Any = None, endpoint: str = None, **context) -> str:
     """
     Build standardized success response in JSON format.
 
@@ -124,10 +118,7 @@ def build_success_response(
             total_count=len(assignments)
         )
     """
-    response = {
-        "status": "success",
-        **context
-    }
+    response = {"status": "success", **context}
 
     # Add data if provided (could be None for some operations)
     if data is not None:

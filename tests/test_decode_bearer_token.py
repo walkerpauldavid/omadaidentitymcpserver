@@ -24,18 +24,20 @@ sys.path.insert(0, str(parent_dir))
 
 # Load environment variables
 from dotenv import load_dotenv
-load_dotenv(parent_dir / '.env')
+
+load_dotenv(parent_dir / ".env")
+
 
 def read_bearer_token():
     """Read bearer token from bearer.txt in tests folder"""
-    token_file = Path(__file__).parent / 'bearer.txt'
+    token_file = Path(__file__).parent / "bearer.txt"
 
     if not token_file.exists():
         print(f"❌ Token file not found: {token_file}")
         print("Please create bearer.txt in the tests folder with your bearer token")
         sys.exit(1)
 
-    with open(token_file, 'r') as f:
+    with open(token_file, "r") as f:
         token = f.read().strip()
 
     # Strip "Bearer " prefix if present
@@ -43,6 +45,7 @@ def read_bearer_token():
 
     print(f"✅ Loaded bearer token from {token_file}")
     return token
+
 
 def decode_jwt_token(token):
     """
@@ -53,7 +56,7 @@ def decode_jwt_token(token):
     """
     try:
         # Split token into parts
-        parts = token.split('.')
+        parts = token.split(".")
 
         if len(parts) != 3:
             print(f"❌ Invalid JWT token format. Expected 3 parts, got {len(parts)}")
@@ -63,19 +66,19 @@ def decode_jwt_token(token):
 
         # Decode header
         # Add padding if needed (base64 requires length to be multiple of 4)
-        header_b64_padded = header_b64 + '=' * (4 - len(header_b64) % 4)
+        header_b64_padded = header_b64 + "=" * (4 - len(header_b64) % 4)
         header_bytes = base64.urlsafe_b64decode(header_b64_padded)
         header = json.loads(header_bytes)
 
         # Decode payload
-        payload_b64_padded = payload_b64 + '=' * (4 - len(payload_b64) % 4)
+        payload_b64_padded = payload_b64 + "=" * (4 - len(payload_b64) % 4)
         payload_bytes = base64.urlsafe_b64decode(payload_b64_padded)
         payload = json.loads(payload_bytes)
 
         return {
-            'header': header,
-            'payload': payload,
-            'signature': signature_b64[:20] + '...'  # Just show first 20 chars
+            "header": header,
+            "payload": payload,
+            "signature": signature_b64[:20] + "...",  # Just show first 20 chars
         }
 
     except Exception as e:
@@ -83,13 +86,15 @@ def decode_jwt_token(token):
         print(f"   Exception type: {type(e).__name__}")
         return None
 
+
 def format_timestamp(timestamp):
     """Convert Unix timestamp to readable datetime string"""
     try:
         dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-        return dt.strftime('%Y-%m-%d %H:%M:%S UTC')
+        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
     except:
         return f"Invalid timestamp: {timestamp}"
+
 
 def calculate_time_remaining(exp_timestamp):
     """Calculate how much time is left until expiry"""
@@ -114,13 +119,14 @@ def calculate_time_remaining(exp_timestamp):
     except:
         return "Unknown"
 
+
 def display_token_info(decoded):
     """Display decoded token information in a human-readable format"""
     if not decoded:
         return
 
-    header = decoded['header']
-    payload = decoded['payload']
+    header = decoded["header"]
+    payload = decoded["payload"]
 
     print("\n" + "=" * 80)
     print("🔑 TOKEN HEADER")
@@ -136,7 +142,9 @@ def display_token_info(decoded):
     # User information
     print(f"\n📧 User Information:")
     print(f"   Username (UPN):     {payload.get('upn', 'N/A')}")
-    print(f"   Email:              {payload.get('email', payload.get('preferred_username', 'N/A'))}")
+    print(
+        f"   Email:              {payload.get('email', payload.get('preferred_username', 'N/A'))}"
+    )
     print(f"   Name:               {payload.get('name', 'N/A')}")
     print(f"   Subject (sub):      {payload.get('sub', 'N/A')}")
     print(f"   Object ID (oid):    {payload.get('oid', 'N/A')}")
@@ -149,28 +157,28 @@ def display_token_info(decoded):
     print(f"   Client ID (azp):    {payload.get('azp', 'N/A')}")
 
     # Scope information
-    scp = payload.get('scp', payload.get('scope', 'N/A'))
+    scp = payload.get("scp", payload.get("scope", "N/A"))
     if isinstance(scp, list):
-        scp = ' '.join(scp)
+        scp = " ".join(scp)
     print(f"   Scope (scp):        {scp}")
 
     # Roles (if any)
-    roles = payload.get('roles', [])
+    roles = payload.get("roles", [])
     if roles:
         print(f"   Roles:              {', '.join(roles)}")
 
     # Time information
     print(f"\n⏰ Time Information:")
 
-    iat = payload.get('iat')
+    iat = payload.get("iat")
     if iat:
         print(f"   Issued At (iat):    {format_timestamp(iat)}")
 
-    nbf = payload.get('nbf')
+    nbf = payload.get("nbf")
     if nbf:
         print(f"   Not Before (nbf):   {format_timestamp(nbf)}")
 
-    exp = payload.get('exp')
+    exp = payload.get("exp")
     if exp:
         print(f"   Expires At (exp):   {format_timestamp(exp)}")
         print(f"   Status:             {calculate_time_remaining(exp)}")
@@ -185,9 +193,24 @@ def display_token_info(decoded):
 
     # Filter out already displayed claims
     displayed_claims = {
-        'upn', 'email', 'preferred_username', 'name', 'sub', 'oid',
-        'iss', 'aud', 'appid', 'azp', 'scp', 'scope', 'roles',
-        'iat', 'nbf', 'exp', 'tid', 'ver'
+        "upn",
+        "email",
+        "preferred_username",
+        "name",
+        "sub",
+        "oid",
+        "iss",
+        "aud",
+        "appid",
+        "azp",
+        "scp",
+        "scope",
+        "roles",
+        "iat",
+        "nbf",
+        "exp",
+        "tid",
+        "ver",
     }
 
     additional_claims = {k: v for k, v in payload.items() if k not in displayed_claims}
@@ -202,6 +225,7 @@ def display_token_info(decoded):
         print("   (none)")
 
     print("\n" + "=" * 80)
+
 
 def main():
     """Main function"""
@@ -226,6 +250,7 @@ def main():
     else:
         print("\n❌ Failed to decode token")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

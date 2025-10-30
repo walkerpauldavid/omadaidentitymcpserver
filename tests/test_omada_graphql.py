@@ -27,16 +27,24 @@ class TestOmadaGraphQL(unittest.TestCase):
         cls.client_id = os.getenv("CLIENT_ID")
         cls.client_secret = os.getenv("CLIENT_SECRET")
         cls.omada_base_url = os.getenv("OMADA_BASE_URL")
-        cls.oauth2_scope = os.getenv("OAUTH2_SCOPE", "api://08eeb6a4-4aee-406f-baa5-4922993f09f3/.default")
+        cls.oauth2_scope = os.getenv(
+            "OAUTH2_SCOPE", "api://08eeb6a4-4aee-406f-baa5-4922993f09f3/.default"
+        )
 
-        if not all([cls.tenant_id, cls.client_id, cls.client_secret, cls.omada_base_url]):
-            raise ValueError("Missing required environment variables: TENANT_ID, CLIENT_ID, CLIENT_SECRET, OMADA_BASE_URL")
+        if not all(
+            [cls.tenant_id, cls.client_id, cls.client_secret, cls.omada_base_url]
+        ):
+            raise ValueError(
+                "Missing required environment variables: TENANT_ID, CLIENT_ID, CLIENT_SECRET, OMADA_BASE_URL"
+            )
 
         # Remove trailing slash from base URL
-        cls.omada_base_url = cls.omada_base_url.rstrip('/')
+        cls.omada_base_url = cls.omada_base_url.rstrip("/")
 
         # Build URLs
-        cls.access_token_url = f"https://login.microsoftonline.com/{cls.tenant_id}/oauth2/v2.0/token"
+        cls.access_token_url = (
+            f"https://login.microsoftonline.com/{cls.tenant_id}/oauth2/v2.0/token"
+        )
         cls.graphql_url = f"{cls.omada_base_url}/api/Domain/2.6"
 
         # Cache for access token
@@ -51,24 +59,19 @@ class TestOmadaGraphQL(unittest.TestCase):
         if self._cached_token:
             return self._cached_token
 
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
         data = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
             "client_secret": self.client_secret,
-            "scope": self.oauth2_scope
+            "scope": self.oauth2_scope,
         }
 
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
-                    self.access_token_url,
-                    headers=headers,
-                    data=data,
-                    timeout=30.0
+                    self.access_token_url, headers=headers, data=data, timeout=30.0
                 )
                 response.raise_for_status()
 
@@ -88,12 +91,16 @@ class TestOmadaGraphQL(unittest.TestCase):
             except Exception as e:
                 raise Exception(f"Token request failed: {str(e)}")
 
-    async def make_graphql_request(self, query: str, variables: Dict = None,
-                                 impersonate_user: str = "test@domain.com") -> Dict:
+    async def make_graphql_request(
+        self,
+        query: str,
+        variables: Dict = None,
+        impersonate_user: str = "test@domain.com",
+    ) -> Dict:
         """Make a GraphQL request to Omada."""
         # Get access token
         token_info = await self.get_access_token()
-        token = token_info.get('access_token')
+        token = token_info.get("access_token")
         if not token:
             raise Exception("Failed to obtain access token")
 
@@ -106,27 +113,25 @@ class TestOmadaGraphQL(unittest.TestCase):
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "impersonate_user": impersonate_user
+            "impersonate_user": impersonate_user,
         }
 
         # Make the GraphQL request
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                self.graphql_url,
-                json=payload,
-                headers=headers,
-                timeout=30.0
+                self.graphql_url, json=payload, headers=headers, timeout=30.0
             )
 
             return {
                 "status_code": response.status_code,
                 "headers": dict(response.headers),
                 "body": response.text,
-                "json": response.json() if response.status_code == 200 else None
+                "json": response.json() if response.status_code == 200 else None,
             }
 
     def test_compliance_workbench_query(self):
         """Test the compliance workbench GraphQL query from cw_graph_response.txt."""
+
         async def run_test():
             query = """query MyQuery {
   complianceWorkbenchData(
@@ -156,8 +161,11 @@ class TestOmadaGraphQL(unittest.TestCase):
             print("🔍 Testing Compliance Workbench Query...")
             response = await self.make_graphql_request(query)
 
-            self.assertEqual(response["status_code"], 200,
-                           f"Expected status 200, got {response['status_code']}: {response['body']}")
+            self.assertEqual(
+                response["status_code"],
+                200,
+                f"Expected status 200, got {response['status_code']}: {response['body']}",
+            )
 
             json_response = response["json"]
             self.assertIn("data", json_response, "Response should contain 'data' field")
@@ -168,12 +176,14 @@ class TestOmadaGraphQL(unittest.TestCase):
                 print(f"   Systems found: {len(workbench_data.get('system', []))}")
 
                 # Print sample data
-                if workbench_data.get('system'):
-                    sample_system = workbench_data['system'][0]
-                    print(f"   Sample system: {sample_system.get('name', 'N/A')} (ID: {sample_system.get('id', 'N/A')})")
+                if workbench_data.get("system"):
+                    sample_system = workbench_data["system"][0]
+                    print(
+                        f"   Sample system: {sample_system.get('name', 'N/A')} (ID: {sample_system.get('id', 'N/A')})"
+                    )
 
-                if workbench_data.get('complianceStatus'):
-                    status = workbench_data['complianceStatus']
+                if workbench_data.get("complianceStatus"):
+                    status = workbench_data["complianceStatus"]
                     print(f"   Compliance Status: {json.dumps(status, indent=2)}")
             else:
                 print(f"❌ No compliance workbench data found in response")
@@ -184,6 +194,7 @@ class TestOmadaGraphQL(unittest.TestCase):
 
     def test_access_requests_query(self):
         """Test the access requests GraphQL query from server.py."""
+
         async def run_test():
             query = """query GetAccessRequests {
   accessRequests {
@@ -211,8 +222,11 @@ class TestOmadaGraphQL(unittest.TestCase):
             print("🔍 Testing Access Requests Query...")
             response = await self.make_graphql_request(query)
 
-            self.assertEqual(response["status_code"], 200,
-                           f"Expected status 200, got {response['status_code']}: {response['body']}")
+            self.assertEqual(
+                response["status_code"],
+                200,
+                f"Expected status 200, got {response['status_code']}: {response['body']}",
+            )
 
             json_response = response["json"]
             self.assertIn("data", json_response, "Response should contain 'data' field")
@@ -229,8 +243,10 @@ class TestOmadaGraphQL(unittest.TestCase):
                 if requests:
                     sample_request = requests[0]
                     print(f"   Sample request ID: {sample_request.get('id', 'N/A')}")
-                    if sample_request.get('beneficiary'):
-                        print(f"   Beneficiary: {sample_request['beneficiary'].get('displayName', 'N/A')}")
+                    if sample_request.get("beneficiary"):
+                        print(
+                            f"   Beneficiary: {sample_request['beneficiary'].get('displayName', 'N/A')}"
+                        )
             else:
                 print(f"❌ No access requests found in response")
                 print(f"   Response: {json.dumps(json_response, indent=2)}")
@@ -240,6 +256,7 @@ class TestOmadaGraphQL(unittest.TestCase):
 
     def test_access_requests_with_filter(self):
         """Test the access requests GraphQL query with filter from server.py."""
+
         async def run_test():
             # Using a common status filter as an example
             filter_field = "status"
@@ -268,11 +285,16 @@ class TestOmadaGraphQL(unittest.TestCase):
   }}
 }}"""
 
-            print(f"🔍 Testing Access Requests Query with Filter ({filter_field}={filter_value})...")
+            print(
+                f"🔍 Testing Access Requests Query with Filter ({filter_field}={filter_value})..."
+            )
             response = await self.make_graphql_request(query)
 
-            self.assertEqual(response["status_code"], 200,
-                           f"Expected status 200, got {response['status_code']}: {response['body']}")
+            self.assertEqual(
+                response["status_code"],
+                200,
+                f"Expected status 200, got {response['status_code']}: {response['body']}",
+            )
 
             json_response = response["json"]
             self.assertIn("data", json_response, "Response should contain 'data' field")
@@ -294,6 +316,7 @@ class TestOmadaGraphQL(unittest.TestCase):
 
     def test_identity_contexts_query(self):
         """Test the identity contexts GraphQL query from server.py."""
+
         async def run_test():
             # Using a sample identity ID - you may need to adjust this
             identity_id = "e3e869c4-369a-476e-a969-d57059d0b1e4"
@@ -303,8 +326,11 @@ class TestOmadaGraphQL(unittest.TestCase):
             print(f"🔍 Testing Identity Contexts Query (Identity ID: {identity_id})...")
             response = await self.make_graphql_request(query)
 
-            self.assertEqual(response["status_code"], 200,
-                           f"Expected status 200, got {response['status_code']}: {response['body']}")
+            self.assertEqual(
+                response["status_code"],
+                200,
+                f"Expected status 200, got {response['status_code']}: {response['body']}",
+            )
 
             json_response = response["json"]
             self.assertIn("data", json_response, "Response should contain 'data' field")
@@ -318,7 +344,9 @@ class TestOmadaGraphQL(unittest.TestCase):
 
                 if contexts:
                     for i, context in enumerate(contexts[:3]):  # Show first 3
-                        print(f"   Context {i+1}: {context.get('name', 'N/A')} (ID: {context.get('id', 'N/A')})")
+                        print(
+                            f"   Context {i+1}: {context.get('name', 'N/A')} (ID: {context.get('id', 'N/A')})"
+                        )
             else:
                 print(f"❌ No identity contexts found in response")
                 print(f"   Response: {json.dumps(json_response, indent=2)}")
@@ -328,13 +356,20 @@ class TestOmadaGraphQL(unittest.TestCase):
 
     def test_token_acquisition(self):
         """Test OAuth2 token acquisition."""
+
         async def run_test():
             print("🔍 Testing OAuth2 Token Acquisition...")
             token_data = await self.get_access_token()
 
-            self.assertIn("access_token", token_data, "Token response should contain access_token")
-            self.assertIn("token_type", token_data, "Token response should contain token_type")
-            self.assertEqual(token_data["token_type"], "Bearer", "Token type should be Bearer")
+            self.assertIn(
+                "access_token", token_data, "Token response should contain access_token"
+            )
+            self.assertIn(
+                "token_type", token_data, "Token response should contain token_type"
+            )
+            self.assertEqual(
+                token_data["token_type"], "Bearer", "Token type should be Bearer"
+            )
 
             print(f"✅ OAuth2 Token acquired successfully!")
             print(f"   Token type: {token_data.get('token_type')}")
@@ -355,8 +390,8 @@ if __name__ == "__main__":
 
         # Run just the compliance workbench test
         suite = unittest.TestSuite()
-        suite.addTest(TestOmadaGraphQL('test_token_acquisition'))
-        suite.addTest(TestOmadaGraphQL('test_compliance_workbench_query'))
+        suite.addTest(TestOmadaGraphQL("test_token_acquisition"))
+        suite.addTest(TestOmadaGraphQL("test_compliance_workbench_query"))
 
         runner = unittest.TextTestRunner(verbosity=2)
         result = runner.run(suite)
@@ -366,9 +401,9 @@ if __name__ == "__main__":
 
         # Run just the access requests tests
         suite = unittest.TestSuite()
-        suite.addTest(TestOmadaGraphQL('test_token_acquisition'))
-        suite.addTest(TestOmadaGraphQL('test_access_requests_query'))
-        suite.addTest(TestOmadaGraphQL('test_access_requests_with_filter'))
+        suite.addTest(TestOmadaGraphQL("test_token_acquisition"))
+        suite.addTest(TestOmadaGraphQL("test_access_requests_query"))
+        suite.addTest(TestOmadaGraphQL("test_access_requests_with_filter"))
 
         runner = unittest.TextTestRunner(verbosity=2)
         result = runner.run(suite)
@@ -380,11 +415,11 @@ if __name__ == "__main__":
         suite = unittest.TestSuite()
 
         # Add tests in logical order
-        suite.addTest(TestOmadaGraphQL('test_token_acquisition'))
-        suite.addTest(TestOmadaGraphQL('test_compliance_workbench_query'))
-        suite.addTest(TestOmadaGraphQL('test_access_requests_query'))
-        suite.addTest(TestOmadaGraphQL('test_access_requests_with_filter'))
-        suite.addTest(TestOmadaGraphQL('test_identity_contexts_query'))
+        suite.addTest(TestOmadaGraphQL("test_token_acquisition"))
+        suite.addTest(TestOmadaGraphQL("test_compliance_workbench_query"))
+        suite.addTest(TestOmadaGraphQL("test_access_requests_query"))
+        suite.addTest(TestOmadaGraphQL("test_access_requests_with_filter"))
+        suite.addTest(TestOmadaGraphQL("test_identity_contexts_query"))
 
         # Run the tests
         runner = unittest.TextTestRunner(verbosity=2)
@@ -394,7 +429,9 @@ if __name__ == "__main__":
     if result.wasSuccessful():
         print("🎉 All tests passed!")
     else:
-        print(f"❌ {len(result.failures)} test(s) failed, {len(result.errors)} error(s)")
+        print(
+            f"❌ {len(result.failures)} test(s) failed, {len(result.errors)} error(s)"
+        )
 
         for test, traceback in result.failures:
             print(f"\nFAILURE: {test}")
