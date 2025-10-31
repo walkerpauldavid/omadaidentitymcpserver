@@ -172,3 +172,39 @@ def build_pagination_clause(page: int = None, rows: int = None) -> str:
     if page is not None and rows is not None:
         return f"pagination: {{page: {page}, rows: {rows}}}, "
     return ""
+
+
+def json_to_graphql_syntax(json_string: str) -> str:
+    """
+    Convert JSON string to GraphQL syntax by removing quotes from object keys.
+
+    JSON format: {"id": "value", "name": "test"}
+    GraphQL format: {id: "value", name: "test"}
+
+    Args:
+        json_string: JSON string with quoted keys (e.g., '[{"id": "123"}]')
+
+    Returns:
+        GraphQL-formatted string with unquoted keys (e.g., '[{id: "123"}]')
+
+    Example:
+        >>> json_to_graphql_syntax('[{"id": "fa58b111-7e91-4723-b998-2df8c0758568"}]')
+        '[{id: "fa58b111-7e91-4723-b998-2df8c0758568"}]'
+
+        >>> json_to_graphql_syntax('[{"id": "123", "name": "test"}]')
+        '[{id: "123", name: "test"}]'
+    """
+    import re
+
+    # First, validate that it's valid JSON
+    try:
+        json.loads(json_string)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON string: {e}")
+
+    # Replace quoted keys with unquoted keys
+    # Pattern matches: "key": where key is a valid identifier
+    # This regex looks for strings like "id": or "name": and removes the quotes around the key
+    graphql_syntax = re.sub(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:', r'\1:', json_string)
+
+    return graphql_syntax

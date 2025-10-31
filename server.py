@@ -51,7 +51,7 @@ logger.info(f"Logging initialized. Writing logs to: {os.path.abspath(LOG_FILE)}"
 logger.info(f"Cache logger will use root logger handlers (level: {LOG_LEVEL})")
 
 # NOW import modules that create loggers - logging is already configured
-from helpers import validate_required_fields, build_error_response, build_success_response, build_pagination_clause
+from helpers import validate_required_fields, build_error_response, build_success_response, build_pagination_clause, json_to_graphql_syntax
 from cache import OmadaCache
 from cache_config import get_ttl_for_operation, should_cache, DEFAULT_TTL
 
@@ -1518,6 +1518,7 @@ async def _execute_graphql_request_cached(query: str, impersonate_user: str,
 
     return result
 
+@with_function_logging
 async def _execute_graphql_request(query: str, impersonate_user: str,
                                  variables: dict = None, graphql_version: str = None,
                                  bearer_token: str = None) -> dict:
@@ -1546,6 +1547,13 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
             payload["variables"] = variables
 
         logger.debug(f"GraphQL Request to {graphql_url} with impersonation of {impersonate_user}")
+
+        # Log the payload in a readable format without escaped newlines
+        logger.debug("Request JSON Payload (BEFORE web service POST):")
+        logger.debug(f"Query:\n{query}")
+        if variables:
+            logger.debug(f"Variables: {json.dumps(variables, indent=2)}")
+
         # Execute request
         async with httpx.AsyncClient() as client:
             response = await client.post(graphql_url, json=payload, headers=headers, timeout=30.0)
@@ -1553,27 +1561,26 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
             # Capture raw HTTP details for debugging
             raw_request_body = json.dumps(payload, indent=2)
             raw_response_body = response.text
+            response_json = json.dumps(response.json() if response.status_code == 200 else {'error': raw_response_body}, indent=2)
+            logger.debug(f"GraphQL Response (status {response.status_code}): {response_json}")
 
+            # Build common response fields
+            result = {
+                "success": response.status_code == 200,
+                "status_code": response.status_code,
+                "endpoint": graphql_url,
+                "raw_request_body": raw_request_body,
+                "raw_response_body": raw_response_body,
+                "request_headers": dict(headers)
+            }
+
+            # Add status-specific fields
             if response.status_code == 200:
-                return {
-                    "success": True,
-                    "data": response.json(),
-                    "status_code": response.status_code,
-                    "endpoint": graphql_url,
-                    "raw_request_body": raw_request_body,
-                    "raw_response_body": raw_response_body,
-                    "request_headers": dict(headers)
-                }
+                result["data"] = response.json()
             else:
-                return {
-                    "success": False,
-                    "status_code": response.status_code,
-                    "error": response.text,
-                    "endpoint": graphql_url,
-                    "raw_request_body": raw_request_body,
-                    "raw_response_body": raw_response_body,
-                    "request_headers": dict(headers)
-                }
+                result["error"] = response.text
+
+            return result
 
     except Exception as e:
         return {
@@ -1603,11 +1610,12 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
     try:
         logger.debug(f"Getting access requests for user: {impersonate_user}, filter: {filter_field}={filter_value if filter_field else 'none'}")
 
-        # Build GraphQL query
-        if filter_field and filter_value:
-            # With filter
-            query = f"""query GetAccessRequests {{
-  accessRequests(filters: {{{filter_field}: {json.dumps(filter_value)}}}) {{
+        # Build filter clause conditionally
+        filter_clause = f"(filters: {{{filter_field}: {json.dumps(filter_value)}}})" if filter_field and filter_value else ""
+
+        # Build GraphQL query with optional filter
+        query = f"""query GetAccessRequests {{
+  accessRequests{filter_clause} {{
     total
     data {{
       id
@@ -1628,30 +1636,6 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
     }}
   }}
 }}"""
-        else:
-            # Without filter
-            query = """query GetAccessRequests {
-  accessRequests {
-    total
-    data {
-      id
-      beneficiary {
-        id
-        identityId
-        displayName
-        contexts {
-          id
-        }
-      }
-      resource {
-        name
-      }
-      status {
-        approvalStatus
-      }
-    }
-  }
-}"""
 
         # Execute GraphQL request WITH CACHING
         result = await _execute_graphql_request_cached(query, impersonate_user, bearer_token=bearer_token, use_cache=use_cache)
@@ -1715,16 +1699,43 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
         impersonate_user: Email address of the user to impersonate (e.g., user@domain.com)
                          PROMPT: "Please provide the email address to impersonate"
                          NOTE: This email will be used to automatically lookup the identity ID
+
         reason: Reason for the access request (cannot be empty)
                 PROMPT: "Please provide a reason for this access request"
-        context: Business context for the access request (cannot be empty)
-                PROMPT: "Please provide the business context for this access request"
-        resources: Resources to request access for (JSON array format, cannot be empty)
-                  PROMPT: "Please provide the resources in JSON array format"
+
+        context: Business context ID for the access request (cannot be empty)
+                IMPORTANT WORKFLOW: When the user needs to provide a context:
+                1. First, lookup the user's identity ID using their email with query_omada_identity
+                2. Then call get_identity_contexts(identity_id, impersonate_user, bearer_token)
+                   to retrieve available contexts for this user
+                3. Display the available contexts to the user with their displayName and type
+                   (e.g., "Personal", "Finance Department")
+                4. Ask the user to select a context from the displayed list
+                5. Use the corresponding context "id" (GUID) value as the context parameter
+
+                EXAMPLE:
+                "I found these contexts for you:
+                 1. Personal (PERSONAL)
+                 2. Finance Department (ORGANIZATIONAL)
+
+                 Which context would you like to use for this access request?"
+
+                NOTE: The context parameter expects the internal GUID id, not the displayName.
+                      You must call get_identity_contexts first to get valid context IDs.
+
+        resources: Resources to request access for (JSON object format, cannot be empty)
+                  WORKFLOW: When the user needs to provide resources:
+                  1. Call get_resources_for_beneficiary(identity_id, impersonate_user, bearer_token)
+                     to get available resources the user can request
+                  2. Display the resources with their names and systems
+                  3. Ask the user to select a resource
+                  4. Use the resource "id" (GUID) in JSON format: {"id": "resource-guid"}
+
+                  PROMPT: "Please provide the resource in JSON object format like: {\"id\": \"resource-id\"}"
 
     Optional parameters:
-        valid_from: Optional valid from date/time
-        valid_to: Optional valid to date/time
+        valid_from: Optional valid from date/time (ISO format)
+        valid_to: Optional valid to date/time (ISO format)
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
     Logging:
@@ -1788,6 +1799,18 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
         valid_to_clause = f'validTo: "{valid_to}",' if valid_to else ''
         context_clause = f'context: "{context}",'
 
+        # Convert resources from JSON format to GraphQL syntax
+        # JSON: {"id": "123"} -> GraphQL: {id: "123"}
+        try:
+            resources_graphql = json_to_graphql_syntax(resources)
+            logger.debug(f"Converted resources from JSON to GraphQL syntax: {resources} -> {resources_graphql}")
+        except ValueError as e:
+            return build_error_response(
+                error_type="ResourcesFormatError",
+                message=f"Invalid resources format: {str(e)}. Expected JSON object format like: {{'id': 'resource-id'}}",
+                provided_resources=resources
+            )
+
         mutation = f"""mutation CreateAccessRequest {{
     createAccessRequest(accessRequest: {{
         reason: "{reason}",
@@ -1795,7 +1818,7 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
         {valid_to_clause}
         {context_clause}
         identities: {{id: "{identity_id}"}},
-        resources: {resources}
+        resources: {resources_graphql}
         }})
     {{
         id
@@ -1889,6 +1912,11 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                 )
             elif "errors" in data:
                 # Handle GraphQL errors
+                # Log the error details for debugging
+                logger.error(f"GraphQL mutation returned errors: {json.dumps(data['errors'], indent=2)}")
+                logger.error(f"Raw Request Body:\n{result.get('raw_request_body', 'N/A')}")
+                logger.error(f"Raw Response Body:\n{result.get('raw_response_body', 'N/A')}")
+
                 return build_error_response(
                     error_type="GraphQLError",
                     message="GraphQL mutation failed",
@@ -1902,6 +1930,11 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                     }
                 )
             else:
+                # Log the unexpected response for debugging
+                logger.error(f"Unexpected response format from access request mutation")
+                logger.error(f"Raw Request Body:\n{result.get('raw_request_body', 'N/A')}")
+                logger.error(f"Raw Response Body:\n{result.get('raw_response_body', 'N/A')}")
+
                 return build_error_response(
                     error_type="UnexpectedResponse",
                     message="Unexpected response format",
@@ -1915,6 +1948,11 @@ async def create_access_request(impersonate_user: str, bearer_token: str, reason
                 )
         else:
             # Handle HTTP request failure using helper
+            # Log the error details for debugging
+            logger.error(f"Access request creation failed with status {result.get('status_code', 'unknown')}")
+            logger.error(f"Raw Request Body:\n{result.get('raw_request_body', 'N/A')}")
+            logger.error(f"Raw Response Body:\n{result.get('raw_response_body', 'N/A')}")
+
             return build_error_response(
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,
