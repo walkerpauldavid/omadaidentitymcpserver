@@ -4,7 +4,7 @@ A Model Context Protocol (MCP) server that provides integration with Omada Ident
 
 ## Features
 
-- **Bearer Token Authentication** - Uses bearer tokens for API authentication (OAuth handled by oauth_mcp_server)
+- **Bearer Token Authentication** - Uses bearer tokens for API authentication (OAuth handled by oig_mcp)
 - **OData API Integration** - Query identities, resources, roles, and assignments
 - **GraphQL API Support** - Access requests, contexts, and detailed calculated assignments
 - **Comprehensive Logging** - File and console logging with per-function log level control
@@ -14,15 +14,15 @@ A Model Context Protocol (MCP) server that provides integration with Omada Ident
 
 - Python 3.8 or higher
 - Omada Identity Cloud instance
-- Bearer token for authentication (obtain from oauth_mcp_server)
+- Bearer token for authentication (obtain from oig-mcp)
 - Required Python packages (see Installation)
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/walkerpauldavid/omadaidentitymcpserver.git
-cd omadaidentitymcpserver
+git clone https://github.com/OmadaDev/omada-mcp-server
+cd omada-mcp-server
 ```
 
 2. Install dependencies:
@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 The `.env` file contains configuration settings and is **not included in the repository** for security reasons. You must create this file manually.
 
-**Note:** OAuth2 authentication has been moved to a separate `oauth_mcp_server` project. This server uses bearer tokens provided by the OAuth server.
+**Note:** OAuth2 authentication has been moved to a separate `oig-mcp` project. This server uses bearer tokens provided by the OAuth server.
 
 **Step-by-step setup:**
 

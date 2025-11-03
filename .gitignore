@@ -1,5 +1,6 @@
 # Python-generated files
 __pycache__/
+.vscode
 *.py[oc]
 build/
 dist/
