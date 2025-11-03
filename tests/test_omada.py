@@ -1,15 +1,16 @@
+import argparse
 import asyncio
+import json
 import os
 import sys
-import argparse
-import json
+
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
 # Import after loading env vars
-from server import query_omada_identity, query_omada_resources, _cached_token
+from server import _cached_token, query_omada_identity, query_omada_resources
 
 # Import test functions from other test files
 try:
@@ -19,17 +20,17 @@ except ImportError:
 
 try:
     from test_resourceassignments import (
-        test_resourceassignments_count,
-        test_resourceassignments_sample,
         test_resourceassignments_by_identity,
         test_resourceassignments_by_resource,
+        test_resourceassignments_count,
+        test_resourceassignments_sample,
     )
 except ImportError:
     test_resourceassignments_count = test_resourceassignments_sample = None
     test_resourceassignments_by_identity = test_resourceassignments_by_resource = None
 
 try:
-    from test_system import test_system_count, test_system_sample, test_system_by_name
+    from test_system import test_system_by_name, test_system_count, test_system_sample
 except ImportError:
     test_system_count = test_system_sample = test_system_by_name = None
 

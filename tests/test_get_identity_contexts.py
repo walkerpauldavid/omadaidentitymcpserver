@@ -3,8 +3,9 @@ Test script for get_identity_contexts function
 """
 
 import asyncio
-import sys
 import os
+import sys
+
 from dotenv import load_dotenv
 
 # Add the current directory to the path to import server module

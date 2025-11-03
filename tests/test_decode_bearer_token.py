@@ -11,12 +11,12 @@ Usage:
     python test_decode_bearer_token.py
 """
 
+import base64
+import json
 import os
 import sys
-import json
-import base64
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
 
 # Add parent directory to path to import from .env
 parent_dir = Path(__file__).parent.parent

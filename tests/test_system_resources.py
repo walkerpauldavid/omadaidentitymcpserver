@@ -1,6 +1,7 @@
 import asyncio
 import json
-from server import query_omada_resources, query_omada_entity
+
+from server import query_omada_entity, query_omada_resources
 
 
 def display_result(result_json, test_name):

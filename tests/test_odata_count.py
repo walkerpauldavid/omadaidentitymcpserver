@@ -1,8 +1,10 @@
 import asyncio
-import httpx
 import json
 import os
+
+import httpx
 from dotenv import load_dotenv
+
 from server import get_cached_token
 
 # Load environment variables

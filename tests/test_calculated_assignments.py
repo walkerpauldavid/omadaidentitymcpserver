@@ -1,5 +1,6 @@
 import asyncio
 import json
+
 from server import query_calculated_assignments, query_omada_entity
 
 

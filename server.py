@@ -1,16 +1,17 @@
 # server.py
-import os
-from typing import Any, Dict, Optional
-import httpx
-from mcp.server.fastmcp.server import FastMCP, Context
-from dotenv import load_dotenv
 import asyncio
-from datetime import datetime, timedelta
-import json
-import urllib.parse
-import logging
-import hashlib
 import base64
+import hashlib
+import json
+import logging
+import os
+import urllib.parse
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
+import httpx
+from dotenv import load_dotenv
+from mcp.server.fastmcp.server import Context, FastMCP
 
 # Load environment variables FIRST
 load_dotenv()
@@ -47,15 +48,16 @@ cache_logger.propagate = True
 logger.info(f"Logging initialized. Writing logs to: {os.path.abspath(LOG_FILE)}")
 logger.info(f"Cache logger will use root logger handlers (level: {LOG_LEVEL})")
 
+from cache import OmadaCache
+from cache_config import DEFAULT_TTL, get_ttl_for_operation, should_cache
+
 # NOW import modules that create loggers - logging is already configured
 from helpers import (
-    validate_required_fields,
     build_error_response,
-    build_success_response,
     build_pagination_clause,
+    build_success_response,
+    validate_required_fields,
 )
-from cache import OmadaCache
-from cache_config import get_ttl_for_operation, should_cache, DEFAULT_TTL
 
 logger.info("All modules imported successfully")
 

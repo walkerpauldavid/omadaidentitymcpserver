@@ -22,13 +22,13 @@ Usage:
 
 import asyncio
 import json
-import sys
 import os
+import sys
 
 # Add parent directory to path to import server module
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from server import get_pending_approvals, get_approval_details, make_approval_decision
+from server import get_approval_details, get_pending_approvals, make_approval_decision
 
 # Default test parameters
 DEFAULT_IMPERSONATE_USER = "ROBWOL@54MV4C.ONMICROSOFT.COM"

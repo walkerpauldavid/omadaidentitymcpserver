@@ -4,13 +4,14 @@ Test class for Omada GraphQL endpoints.
 This test suite includes examples from server.py and the compliance workbench query.
 """
 
-import os
 import asyncio
 import json
-import httpx
-from typing import Dict, Any, Optional
-from dotenv import load_dotenv
+import os
 import unittest
+from typing import Any, Dict, Optional
+
+import httpx
+from dotenv import load_dotenv
 
 
 class TestOmadaGraphQL(unittest.TestCase):

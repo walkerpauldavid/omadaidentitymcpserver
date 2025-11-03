@@ -5,9 +5,9 @@ Comprehensive tests for various operators and field combinations.
 """
 
 import asyncio
-import sys
-import os
 import json
+import os
+import sys
 
 # Add the current directory to Python path so we can import from server.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

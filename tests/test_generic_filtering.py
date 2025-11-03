@@ -4,6 +4,7 @@ Test the new generic field filtering functionality
 """
 import asyncio
 import json
+
 from server import query_omada_entity
 
 

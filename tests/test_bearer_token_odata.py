@@ -8,11 +8,12 @@ Usage:
     python test_bearer_token_odata.py
 """
 
+import json
 import os
 import sys
-import requests
-import json
 from pathlib import Path
+
+import requests
 
 # Add parent directory to path to import from .env
 parent_dir = Path(__file__).parent.parent

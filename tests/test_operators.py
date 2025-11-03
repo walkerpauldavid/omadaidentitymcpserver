@@ -4,7 +4,8 @@
 
 import asyncio
 import json
-from server import query_omada_identity, query_omada_entity
+
+from server import query_omada_entity, query_omada_identity
 
 
 def display_filtered_result(result_json, test_name, show_fields=None):

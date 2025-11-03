@@ -5,9 +5,9 @@ Debug script to compare cache keys and identify why duplicates exist.
 Run this script to analyze the cache database and find duplicate entries.
 """
 
-import sqlite3
-import json
 import hashlib
+import json
+import sqlite3
 from datetime import datetime
 
 

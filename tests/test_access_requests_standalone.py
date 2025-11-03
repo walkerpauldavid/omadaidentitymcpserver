@@ -4,8 +4,9 @@ Standalone test script for the get_access_requests function.
 """
 
 import asyncio
-import sys
 import os
+import sys
+
 from server import get_access_requests
 
 

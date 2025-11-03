@@ -4,7 +4,8 @@ Demonstrate the improved generic API vs the old hardcoded approach
 """
 import asyncio
 import json
-from server import query_omada_entity, query_omada_entities
+
+from server import query_omada_entities, query_omada_entity
 
 
 async def demo_old_vs_new():
