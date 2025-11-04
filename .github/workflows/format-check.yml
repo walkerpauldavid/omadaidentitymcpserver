@@ -30,11 +30,11 @@ jobs:
           echo "🖌️ Running Black formatter check..."
           black --check ${{ env.PROJECT_NAME }}
         env:
-          PROJECT_NAME: oig-mcp  # replace with your actual project name
+          PROJECT_NAME: omada-mcp-server  # replace with your actual project name
 
       - name: 🔀 Run isort import sorter check
         run: |
           echo "🔀 Running isort import sorter check..."
           isort --profile black --check-only ${{ env.PROJECT_NAME }}
         env:
-          PROJECT_NAME: oig-mcp  # same here
+          PROJECT_NAME: omada-mcp-server  # same here
