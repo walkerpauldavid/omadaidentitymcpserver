@@ -3190,5 +3190,193 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
         )
 
 
+@with_function_logging
+@mcp.tool()
+async def check_access_request_policy(identity_id: str, resource_ids: str, impersonate_user: str, bearer_token: str) -> str:
+    """
+    Check Segregation of Duty (SoD) policies for an access request using Omada GraphQL API.
+
+    CRITICAL - ALWAYS USE THIS FUNCTION BEFORE CREATING AN ACCESS REQUEST:
+    This function MUST be called before submitting any access request to check for policy violations.
+
+    USE THIS FUNCTION when user asks to:
+    - "check SoD policy" or "check segregation of duty"
+    - "check access request policy"
+    - "validate access request"
+    - "are there any policy violations"
+    - "can I request these resources"
+    - Before ANY access request creation to validate compliance
+
+    WORKFLOW:
+    1. User wants to request access to resource(s)
+    2. FIRST: Call this function to check for SoD policy violations
+    3. Review results with user - show any violations or conflicts
+    4. ONLY THEN: If approved, proceed with creating the access request
+
+    CRITICAL - Identity ID Field Name:
+        WRONG: Do NOT use the "Id" field (e.g., 1006715) - this is the integer database ID
+        CORRECT: Use the "UId" field (e.g., "e3e869c4-369a-476e-a969-d57059d0b1e4") - this is the 32-character UUID
+
+        When querying for identity data, you MUST:
+        1. Query the Identity entity to get the user record
+        2. Extract the "UId" field (NOT "Id") from the result
+        3. Use that UId value as the identity_id parameter
+
+        Example workflow:
+        - Query: query_omada_identity with EMAIL filter returns {"UId": "e3e869c4-...", "Id": 1006715}
+        - Use UId: "e3e869c4-..." as identity_id parameter (32 character UUID)
+        - DO NOT use Id: 1006715 (this will fail!)
+
+    IMPORTANT: This function requires 4 mandatory parameters. If any are missing,
+    you MUST prompt the user to provide them before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        identity_id: The beneficiary identity UId (32-character UUID, NOT the integer Id field!)
+                    Example: "e3e869c4-369a-476e-a969-d57059d0b1e4" (CORRECT)
+                    NOT: 1006715 (WRONG - this is the Id field, not UId)
+                    PROMPT: "Please provide the beneficiary identity UId (32-character UUID from the UId field)"
+        resource_ids: Comma-separated list of resource UIds to check (at least one required)
+                     Example: "95d4f3dd-a2c1-4838-8830-f39a56e2f1e7,29fb5413-d26b-4e7b-94ea-250b046432e8"
+                     PROMPT: "Please provide at least one resource UId to check"
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+
+    Returns:
+        JSON response with SoD policy check results including:
+        - soDPolicyCheck: Policy check information
+          - description: Policy description
+          - title: Policy title
+          - policyCheckResults: List of check results
+            - accountName: Account name involved
+            - description: Description of the violation
+            - status: Status (e.g., PASSED, FAILED, WARNING)
+    """
+    try:
+        # Validate mandatory fields
+        error = validate_required_fields(
+            identity_id=identity_id,
+            resource_ids=resource_ids,
+            impersonate_user=impersonate_user
+        )
+        if error:
+            return error
+
+        # Validate that identity_id is not empty or null
+        if not identity_id or identity_id.strip() == "":
+            return build_error_response(
+                error_type="ValidationError",
+                message="identity_id parameter is required and cannot be empty",
+                hint="Please provide the beneficiary identity UId (32-character UUID)"
+            )
+
+        # Validate that identity_id is a UUID (32 characters), not an integer Id
+        if identity_id.strip().isdigit():
+            return build_error_response(
+                error_type="ValidationError",
+                message=f"Invalid identity_id: '{identity_id}' appears to be an integer Id field, but this function requires the UId field (32-character UUID). "
+                        f"When you query an Identity, you get both 'Id' (integer like 1006715) and 'UId' (UUID like 'e3e869c4-369a-476e-a969-d57059d0b1e4'). "
+                        f"You MUST use the UId field, not the Id field.",
+                hint="Query the identity first, then extract the 'UId' field (not 'Id') from the response"
+            )
+
+        # Validate that resource_ids has at least one resource
+        if not resource_ids or resource_ids.strip() == "":
+            return build_error_response(
+                error_type="ValidationError",
+                message="resource_ids parameter is required and must contain at least one resource UId",
+                hint="Please provide a comma-separated list of resource UIds (e.g., 'uuid1,uuid2')"
+            )
+
+        # Parse and validate resource IDs
+        resource_id_list = [rid.strip() for rid in resource_ids.split(',') if rid.strip()]
+
+        if len(resource_id_list) == 0:
+            return build_error_response(
+                error_type="ValidationError",
+                message="resource_ids parameter must contain at least one valid resource UId",
+                hint="Please provide at least one resource UId (comma-separated if multiple)"
+            )
+
+        # Build the resources array for GraphQL query
+        resources_array = ', '.join([f'{{id: "{rid}"}}' for rid in resource_id_list])
+
+        # Build GraphQL query based on graphql_requestpolicycheck.txt
+        graphql_query = f"""
+        query CheckAccessRequestPolicy {{
+          accessRequestPolicyChecks(
+            accessRequests: {{identityResources: {{
+              identity: {{id: "{identity_id}"}},
+              resources: [{resources_array}]
+            }}}}
+          ) {{
+            soDPolicyCheck {{
+              description
+              title
+              policyCheckResults {{
+                accountName
+                description
+                status
+              }}
+            }}
+          }}
+        }}
+        """
+
+        logger.debug(f"GraphQL Query: {graphql_query}")
+        logger.debug(f"Checking SoD policy for identity {identity_id} with {len(resource_id_list)} resource(s)")
+
+        # Execute GraphQL request
+        result = await _execute_graphql_request(
+            query=graphql_query,
+            impersonate_user=impersonate_user,
+            bearer_token=bearer_token
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract policy check results from the GraphQL response
+            if ('data' in data and 'accessRequestPolicyChecks' in data['data']):
+                policy_checks = data['data']['accessRequestPolicyChecks']
+
+                # Extract SoD policy check details
+                sod_policy_check = policy_checks.get('soDPolicyCheck', {})
+
+                return build_success_response(
+                    data={
+                        "sod_policy_check": sod_policy_check,
+                        "identity_id": identity_id,
+                        "resource_count": len(resource_id_list),
+                        "resources_checked": resource_id_list
+                    },
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    policy_title=sod_policy_check.get('title', 'N/A'),
+                    policy_results_count=len(sod_policy_check.get('policyCheckResults', []))
+                )
+            else:
+                return build_error_response(
+                    error_type="NoPolicyCheckFound",
+                    message="No access request policy check results found in response",
+                    impersonated_user=impersonate_user,
+                    response=data
+                )
+        else:
+            # Handle GraphQL request failure
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=f"Error checking access request policy: {str(e)}",
+            impersonated_user=impersonate_user
+        )
+
+
 if __name__ == "__main__":
     mcp.run()
