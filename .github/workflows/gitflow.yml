@@ -38,8 +38,8 @@ jobs:
                 exit 1
               fi
             elif [[ "$TARGET" == "develop" ]]; then
-              if [[ ! "$SOURCE" =~ ^(feature/|release/) ]]; then
-                echo "❌ PRs to develop must come from feature/* or release/*"
+              if [[ ! "$SOURCE" =~ ^(feature/|release/|hotfix/) ]]; then
+                echo "❌ PRs to develop must come from feature/* or release/* or hotfix/*"
                 exit 1
               fi
             fi
