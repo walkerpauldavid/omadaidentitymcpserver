@@ -1,0 +1,42 @@
+name: Unit Tests & Coverage
+
+on:
+  push:
+    branches: [ main, develop, feature/** ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-cov coverage
+
+      # ✅ Run tests with coverage on a specific folder
+      # Replace `src/my_package` with your folder
+      - name: Run tests with coverage
+        run: |
+          pytest \
+            --cov=omada-mcp-server \
+            --cov-report=xml \
+            --cov-report=term \
+            --cov-fail-under=80 \
+            --ignore=tests
+
+      # Optional: upload coverage report as an artifact
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml

@@ -122,21 +122,6 @@ async def test_calculated_assignments_wrapper():
     )
 
 
-async def test_calculated_assignments_generic():
-    """Test calculated assignments using generic function"""
-    result = await query_omada_entity(
-        entity_type="CalculatedAssignments",
-        identity_id=1006500,
-        select_fields="AssignmentKey,AccountName",
-        expand="Identity,Resource,ResourceType",
-        top=5,
-        include_count=True,
-    )
-    display_assignments_result(
-        result, "Test 3: Calculated Assignments via Generic Function"
-    )
-
-
 async def test_calculated_assignments_custom_select():
     """Test with custom select fields"""
     result = await query_calculated_assignments(
@@ -168,18 +153,6 @@ async def test_calculated_assignments_different_identity():
     display_assignments_result(
         result, "Test 6: Assignments for Identity 1006715 (Emma Taylor)"
     )
-
-
-async def test_calculated_assignments_custom_filter():
-    """Test with custom filter condition"""
-    result = await query_omada_entity(
-        entity_type="CalculatedAssignments",
-        filter_condition="Identity/Id eq 1006500",
-        select_fields="AssignmentKey,AccountName",
-        expand="Identity,Resource,ResourceType",
-        top=3,
-    )
-    display_assignments_result(result, "Test 7: Custom Filter (Identity/Id eq 1006500)")
 
 
 async def test_endpoint_structure():

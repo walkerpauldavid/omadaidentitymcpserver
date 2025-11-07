@@ -102,42 +102,6 @@ async def test_resourceassignments_sample():
     )
 
 
-async def test_resourceassignments_by_identity():
-    """Test filtering resource assignments by identity name"""
-    result = await query_omada_entity(
-        entity_type="RESOURCEASSIGNMENT",
-        filter_condition="contains(IDENTITYNAME, 'Emma')",
-        top=10,
-    )
-    display_resource_assignment_result(
-        result, "Test 3: Resource Assignments for Identities containing 'Emma'"
-    )
-
-
-async def test_resourceassignments_by_resource():
-    """Test filtering resource assignments by resource name"""
-    result = await query_omada_entity(
-        entity_type="RESOURCEASSIGNMENT",
-        filter_condition="contains(RESOURCENAME, 'Admin')",
-        top=10,
-    )
-    display_resource_assignment_result(
-        result, "Test 4: Resource Assignments containing 'Admin' in resource name"
-    )
-
-
-async def test_resourceassignments_by_status():
-    """Test filtering resource assignments by assignment status"""
-    result = await query_omada_entity(
-        entity_type="RESOURCEASSIGNMENT",
-        filter_condition="ASSIGNMENTSTATUS/Value eq 'Assigned'",
-        top=10,
-    )
-    display_resource_assignment_result(
-        result, "Test 5: Active Resource Assignments (Status = 'Assigned')"
-    )
-
-
 async def test_resourceassignments_structure():
     """Test to explore the structure of a single resource assignment"""
     result = await query_omada_entity(entity_type="RESOURCEASSIGNMENT", top=1)

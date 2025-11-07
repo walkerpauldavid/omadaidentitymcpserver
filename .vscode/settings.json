@@ -8,12 +8,9 @@
         "--tb=short"
     ],
 
-    // Python environment
-    "python.defaultInterpreterPath": "C:\\Users\\demoadm\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
-
     // Auto-discover tests
     "python.testing.autoTestDiscoverOnSaveEnabled": true,
 
     // Test output
-    "python.testing.cwd": "${workspaceFolder}"
+    "python.testing.cwd": "${workspaceFolder}\\omada-mcp-server"
 }
