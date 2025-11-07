@@ -32,20 +32,22 @@ def validate_required_fields(**kwargs) -> Optional[str]:
             return error
     """
     for field_name, field_value in kwargs.items():
-        if field_value is None or (isinstance(field_value, str) and not field_value.strip()):
-            return json.dumps({
-                "status": "error",
-                "message": f"Missing required field: {field_name}",
-                "error_type": "ValidationError"
-            }, indent=2)
+        if field_value is None or (
+            isinstance(field_value, str) and not field_value.strip()
+        ):
+            return json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Missing required field: {field_name}",
+                    "error_type": "ValidationError",
+                },
+                indent=2,
+            )
     return None
 
 
 def build_error_response(
-    error_type: str,
-    result: dict = None,
-    message: str = None,
-    **extra_fields
+    error_type: str, result: dict = None, message: str = None, **extra_fields
 ) -> str:
     """
     Build standardized error response in JSON format.
@@ -74,11 +76,7 @@ def build_error_response(
             impersonated_user=impersonate_user
         )
     """
-    error_result = {
-        "status": "error",
-        "error_type": error_type,
-        **extra_fields
-    }
+    error_result = {"status": "error", "error_type": error_type, **extra_fields}
 
     # Add custom message if provided
     if message:
@@ -99,11 +97,7 @@ def build_error_response(
     return json.dumps(error_result, indent=2)
 
 
-def build_success_response(
-    data: Any = None,
-    endpoint: str = None,
-    **context
-) -> str:
+def build_success_response(data: Any = None, endpoint: str = None, **context) -> str:
     """
     Build standardized success response in JSON format.
 
@@ -124,10 +118,7 @@ def build_success_response(
             total_count=len(assignments)
         )
     """
-    response = {
-        "status": "success",
-        **context
-    }
+    response = {"status": "success", **context}
 
     # Add data if provided (could be None for some operations)
     if data is not None:
@@ -203,7 +194,7 @@ def json_to_graphql_syntax(resources_json: str) -> str:
     try:
         # Parse the JSON string
         parsed = json.loads(resources_json)
-        
+
         def convert_dict_to_graphql(obj):
             """Convert a dictionary to GraphQL syntax."""
             if isinstance(obj, dict):
@@ -212,31 +203,38 @@ def json_to_graphql_syntax(resources_json: str) -> str:
                     if isinstance(value, str):
                         pairs.append(f'{key}: "{value}"')
                     elif isinstance(value, (int, float, bool)):
-                        pairs.append(f'{key}: {str(value).lower()}')
+                        pairs.append(f"{key}: {str(value).lower()}")
                     elif isinstance(value, dict):
-                        pairs.append(f'{key}: {convert_dict_to_graphql(value)}')
+                        pairs.append(f"{key}: {convert_dict_to_graphql(value)}")
                     elif isinstance(value, list):
-                        list_items = [convert_dict_to_graphql(item) if isinstance(item, dict) else f'"{item}"' if isinstance(item, str) else str(item) for item in value]
+                        list_items = [
+                            (
+                                convert_dict_to_graphql(item)
+                                if isinstance(item, dict)
+                                else f'"{item}"' if isinstance(item, str) else str(item)
+                            )
+                            for item in value
+                        ]
                         pairs.append(f'{key}: [{", ".join(list_items)}]')
                     else:
                         pairs.append(f'{key}: "{str(value)}"')
-                return '{' + ', '.join(pairs) + '}'
+                return "{" + ", ".join(pairs) + "}"
             elif isinstance(obj, str):
                 return f'"{obj}"'
             elif isinstance(obj, (int, float, bool)):
                 return str(obj).lower()
             else:
                 return f'"{str(obj)}"'
-        
+
         if isinstance(parsed, list):
             # Handle array of resources
             graphql_items = [convert_dict_to_graphql(item) for item in parsed]
-            return '[' + ', '.join(graphql_items) + ']'
+            return "[" + ", ".join(graphql_items) + "]"
         elif isinstance(parsed, dict):
             # Handle single resource
             return convert_dict_to_graphql(parsed)
         else:
             raise ValueError(f"Unsupported type for GraphQL conversion: {type(parsed)}")
-            
+
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON format: {str(e)}")

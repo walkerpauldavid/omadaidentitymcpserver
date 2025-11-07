@@ -94,24 +94,6 @@ async def test_system_sample():
     display_system_result(result, "Test 2: Sample Systems (Top 10)")
 
 
-async def test_system_by_name():
-    """Test filtering systems by name"""
-    result = await query_omada_entity(
-        entity_type="System", filter_condition="contains(DISPLAYNAME, 'AD')", top=5
-    )
-    display_system_result(result, "Test 3: Systems containing 'AD' in display name")
-
-
-async def test_system_by_type():
-    """Test filtering systems by type"""
-    result = await query_omada_entity(
-        entity_type="System",
-        filter_condition="SYSTEMTYPE/Value eq 'Active Directory'",
-        top=5,
-    )
-    display_system_result(result, "Test 4: Active Directory Systems")
-
-
 async def test_system_structure():
     """Test to explore the structure of a single system"""
     result = await query_omada_entity(entity_type="System", top=1)

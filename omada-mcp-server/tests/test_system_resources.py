@@ -91,27 +91,6 @@ async def test_resources_by_system_wrapper():
     display_result(result, "Test 2: Resources for System 1011066 (via wrapper)")
 
 
-async def test_resources_by_system_direct():
-    """Test querying resources by system using the generic function"""
-    result = await query_omada_entity(
-        entity_type="Resource", system_id=1011066, top=5, include_count=True
-    )
-    display_result(
-        result, "Test 3: Resources for System 1011066 (via generic function)"
-    )
-
-
-async def test_resources_by_system_custom_filter():
-    """Test querying resources by system using custom filter"""
-    result = await query_omada_entity(
-        entity_type="Resource",
-        filter_condition="Systemref/Id eq 1011066",
-        top=5,
-        include_count=True,
-    )
-    display_result(result, "Test 4: Resources for System 1011066 (via custom filter)")
-
-
 async def test_combined_system_and_type():
     """Test querying resources by both system and resource type"""
     result = await query_omada_resources(
