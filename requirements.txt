@@ -1,3 +1,5 @@
+black
+isort
 # HTTP client for making API requests to Omada and Azure
 httpx>=0.28.0
 
