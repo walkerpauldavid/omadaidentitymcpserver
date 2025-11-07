@@ -320,7 +320,7 @@ All functions return JSON responses with status indicators:
 
 ## License
 
-[Add your license information here]
+See the [LICENSE](./LICENSE) file for details.
 
 ## Support
 
