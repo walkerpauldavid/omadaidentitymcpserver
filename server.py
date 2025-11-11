@@ -57,6 +57,23 @@ from cache_config import get_ttl_for_operation, should_cache, DEFAULT_TTL
 
 logger.info("All modules imported successfully")
 
+# Configure optimized HTTP client with HTTP/2 support and connection pooling
+# This client is reused across all requests for better performance
+http_client = httpx.AsyncClient(
+    http2=True,  # Enable HTTP/2 multiplexing for concurrent requests
+    timeout=httpx.Timeout(30.0, connect=10.0),  # 30s total, 10s connect timeout
+    limits=httpx.Limits(
+        max_keepalive_connections=20,  # Reuse up to 20 connections
+        max_connections=100,  # Support up to 100 concurrent requests
+        keepalive_expiry=300.0  # Keep connections alive for 5 minutes
+    ),
+    headers={
+        "User-Agent": "Omada-MCP-Server/1.0",
+    },
+)
+
+logger.info("HTTP client configured with HTTP/2 support and connection pooling")
+
 def get_function_log_level(function_name: str) -> int:
     """
     Get the log level for a specific function, falling back to global LOG_LEVEL.
@@ -596,6 +613,10 @@ async def query_omada_entity(entity_type: str = "Identity",
             # Strip "Bearer " prefix if already present to avoid double-prefix
             clean_token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
             auth_header = f"Bearer {clean_token}"
+            logger.debug(f"Token length: {len(clean_token)} characters")
+            logger.debug(f"Full bearer_token parameter: {bearer_token}")
+            logger.debug(f"Clean token (after strip): {clean_token}")
+            logger.debug(f"Full Authorization header: {auth_header}")
         else:
             # OAuth token functions have been migrated to oauth_mcp_server
             # bearer_token is now mandatory for all authentication methods
@@ -622,64 +643,63 @@ async def query_omada_entity(entity_type: str = "Identity",
         if impersonate_user:
             headers["impersonate_user"] = impersonate_user
             logger.debug(f"Using impersonate_user: {impersonate_user}")
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(endpoint_url, headers=headers, timeout=30.0)
-            
-            if response.status_code == 200:
-                # Parse the response
-                data = response.json()
 
-                if count_only:
-                    # Return just the count
-                    count = data.get("@odata.count", len(data.get("value", [])))
-                    return build_success_response(
-                        data=None,
-                        endpoint=endpoint_url,
-                        entity_type=entity_type,
-                        count=count,
-                        filter=query_params.get('$filter', 'none')
-                    )
-                else:
-                    # Return full data with metadata
-                    entities_found = len(data.get("value", []))
-                    total_count = data.get("@odata.count")  # Available if $count=true was included
+        response = await http_client.get(endpoint_url, headers=headers, timeout=30.0)
 
-                    # Apply summarization if requested
-                    response_data = data
-                    if summary_mode:
-                        response_data = _summarize_entities(data, entity_type)
+        if response.status_code == 200:
+            # Parse the response
+            data = response.json()
 
-                    # Build response with entity-specific metadata
-                    extra_fields = {
-                        "entity_type": entity_type,
-                        "entities_returned": entities_found,
-                        "total_count": total_count,
-                        "filter": query_params.get('$filter', 'none'),
-                        "summary_mode": summary_mode
-                    }
-
-                    # Add entity-specific metadata
-                    if entity_type == "Resource" and resource_type_id:
-                        extra_fields["resource_type_id"] = resource_type_id
-
-                    return build_success_response(
-                        data=response_data,
-                        endpoint=endpoint_url,
-                        **extra_fields
-                    )
-            elif response.status_code == 400:
-                raise ODataQueryError(f"Bad request - invalid OData query: {response.text[:200]}", response.status_code)
-            elif response.status_code == 401:
-                raise AuthenticationError("Authentication failed - token may be expired", response.status_code)
-            elif response.status_code == 403:
-                raise AuthenticationError("Access forbidden - insufficient permissions", response.status_code)
-            elif response.status_code == 404:
-                raise OmadaServerError("Omada endpoint not found - check base URL", response.status_code)
-            elif response.status_code >= 500:
-                raise OmadaServerError(f"Omada server error: {response.status_code}", response.status_code, response.text)
+            if count_only:
+                # Return just the count
+                count = data.get("@odata.count", len(data.get("value", [])))
+                return build_success_response(
+                    data=None,
+                    endpoint=endpoint_url,
+                    entity_type=entity_type,
+                    count=count,
+                    filter=query_params.get('$filter', 'none')
+                )
             else:
-                raise OmadaServerError(f"Unexpected response: {response.status_code}", response.status_code, response.text)
+                # Return full data with metadata
+                entities_found = len(data.get("value", []))
+                total_count = data.get("@odata.count")  # Available if $count=true was included
+
+                # Apply summarization if requested
+                response_data = data
+                if summary_mode:
+                    response_data = _summarize_entities(data, entity_type)
+
+                # Build response with entity-specific metadata
+                extra_fields = {
+                    "entity_type": entity_type,
+                    "entities_returned": entities_found,
+                    "total_count": total_count,
+                    "filter": query_params.get('$filter', 'none'),
+                    "summary_mode": summary_mode
+                }
+
+                # Add entity-specific metadata
+                if entity_type == "Resource" and resource_type_id:
+                    extra_fields["resource_type_id"] = resource_type_id
+
+                return build_success_response(
+                    data=response_data,
+                    endpoint=endpoint_url,
+                    **extra_fields
+                )
+        elif response.status_code == 400:
+            raise ODataQueryError(f"Bad request - invalid OData query: {response.text[:200]}", response.status_code)
+        elif response.status_code == 401:
+            raise AuthenticationError("Authentication failed - token may be expired", response.status_code)
+        elif response.status_code == 403:
+            raise AuthenticationError("Access forbidden - insufficient permissions", response.status_code)
+        elif response.status_code == 404:
+            raise OmadaServerError("Omada endpoint not found - check base URL", response.status_code)
+        elif response.status_code >= 500:
+            raise OmadaServerError(f"Omada server error: {response.status_code}", response.status_code, response.text)
+        else:
+            raise OmadaServerError(f"Unexpected response: {response.status_code}", response.status_code, response.text)
                 
     except AuthenticationError as e:
         return build_error_response(
@@ -925,6 +945,21 @@ async def query_calculated_assignments(identity_id: int = None,
     """
     Query Omada CalculatedAssignments entities (wrapper for query_omada_entity).
 
+    IMPORTANT LLM INSTRUCTIONS:
+        DO NOT USE THIS TOOL for compliance-related queries!
+
+        For compliance queries like:
+        - "Show compliance issues for {person}"
+        - "What compliance violations does {person} have?"
+        - "Check compliance status for {person}"
+
+        USE INSTEAD:
+        - get_calculated_assignments_summary() for quick compliance overview
+        - get_calculated_assignments_detailed() for detailed compliance info with violations
+
+        This OData tool does NOT return compliance status or violation information.
+        Use the GraphQL tools above which have complianceStatus and violations fields.
+
     Args:
         identity_id: Numeric ID for identity to get assignments for (e.g., 1006500)
         select_fields: Fields to select (default: "AssignmentKey,AccountName")
@@ -980,15 +1015,25 @@ async def get_all_omada_identities(top: int = 1000,
     Returns:
         JSON response with all identity data or error message
     """
-    return await query_omada_identity(
-        top=top,
-        skip=skip,
-        select_fields=select_fields,
-        order_by=order_by,
-        filter_condition=None,  # No filter to get all
-        include_count=include_count,
-        bearer_token=bearer_token
-    )
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_all_omada_identities called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
+    try:
+        return await query_omada_identity(
+            top=top,
+            skip=skip,
+            select_fields=select_fields,
+            order_by=order_by,
+            filter_condition=None,  # No filter to get all
+            include_count=include_count,
+            bearer_token=bearer_token
+        )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_all_omada_identities | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
@@ -1054,6 +1099,10 @@ async def get_cache_stats() -> str:
     Returns:
         JSON string with cache statistics
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_cache_stats called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     try:
         if not CACHE_ENABLED or cache is None:
             return json.dumps({
@@ -1086,6 +1135,11 @@ async def get_cache_stats() -> str:
             error_type=type(e).__name__,
             message=f"Error getting cache stats: {str(e)}"
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_cache_stats | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 @with_function_logging
 @mcp.tool()
@@ -1318,6 +1372,10 @@ async def get_cache_efficiency() -> str:
     Returns:
         JSON with detailed efficiency metrics and recommendations
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_cache_efficiency called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     try:
         if not CACHE_ENABLED or cache is None:
             return json.dumps({
@@ -1337,6 +1395,11 @@ async def get_cache_efficiency() -> str:
             error_type=type(e).__name__,
             message=f"Error calculating cache efficiency: {str(e)}"
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_cache_efficiency | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 async def _prepare_graphql_request(impersonate_user: str, graphql_version: str = None, bearer_token: str = None):
     """
@@ -1371,6 +1434,9 @@ async def _prepare_graphql_request(impersonate_user: str, graphql_version: str =
     logger.debug("Using provided bearer token")
     # Strip "Bearer " prefix if already present to avoid double-prefix
     token = bearer_token.replace("Bearer ", "").replace("bearer ", "").strip()
+    logger.debug(f"Token length: {len(token)} characters")
+    logger.debug(f"Full bearer_token parameter: {bearer_token}")
+    logger.debug(f"Clean token (after strip): {token}")
 
     # Get base URL using helper function (no parameter needed, will read from env)
     omada_base_url = _get_omada_base_url()
@@ -1384,9 +1450,15 @@ async def _prepare_graphql_request(impersonate_user: str, graphql_version: str =
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "impersonate_user": impersonate_user,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
+
+    # Only add impersonate_user header if provided
+    if impersonate_user:
+        headers["impersonate_user"] = impersonate_user
+        logger.debug(f"Adding impersonate_user header: {impersonate_user}")
+    else:
+        logger.debug("No impersonate_user header added")
 
     return graphql_url, headers, token
 
@@ -1554,33 +1626,32 @@ async def _execute_graphql_request(query: str, impersonate_user: str,
         if variables:
             logger.debug(f"Variables: {json.dumps(variables, indent=2)}")
 
-        # Execute request
-        async with httpx.AsyncClient() as client:
-            response = await client.post(graphql_url, json=payload, headers=headers, timeout=30.0)
+        # Execute request using shared optimized client
+        response = await http_client.post(graphql_url, json=payload, headers=headers, timeout=30.0)
 
-            # Capture raw HTTP details for debugging
-            raw_request_body = json.dumps(payload, indent=2)
-            raw_response_body = response.text
-            response_json = json.dumps(response.json() if response.status_code == 200 else {'error': raw_response_body}, indent=2)
-            logger.debug(f"GraphQL Response (status {response.status_code}): {response_json}")
+        # Capture raw HTTP details for debugging
+        raw_request_body = json.dumps(payload, indent=2)
+        raw_response_body = response.text
+        response_json = json.dumps(response.json() if response.status_code == 200 else {'error': raw_response_body}, indent=2)
+        logger.debug(f"GraphQL Response (status {response.status_code}): {response_json}")
 
-            # Build common response fields
-            result = {
-                "success": response.status_code == 200,
-                "status_code": response.status_code,
-                "endpoint": graphql_url,
-                "raw_request_body": raw_request_body,
-                "raw_response_body": raw_response_body,
-                "request_headers": dict(headers)
-            }
+        # Build common response fields
+        result = {
+            "success": response.status_code == 200,
+            "status_code": response.status_code,
+            "endpoint": graphql_url,
+            "raw_request_body": raw_request_body,
+            "raw_response_body": raw_response_body,
+            "request_headers": dict(headers)
+        }
 
-            # Add status-specific fields
-            if response.status_code == 200:
-                result["data"] = response.json()
-            else:
-                result["error"] = response.text
+        # Add status-specific fields
+        if response.status_code == 200:
+            result["data"] = response.json()
+        else:
+            result["error"] = response.text
 
-            return result
+        return result
 
     except Exception as e:
         return {
@@ -1607,6 +1678,10 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
     Returns:
         JSON string containing access requests data
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_access_requests called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     try:
         logger.debug(f"Getting access requests for user: {impersonate_user}, filter: {filter_field}={filter_value if filter_field else 'none'}")
 
@@ -1684,6 +1759,11 @@ async def get_access_requests(impersonate_user: str, bearer_token: str, filter_f
             message=f"Error getting access requests: {str(e)}",
             impersonated_user=impersonate_user
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_access_requests | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 @with_function_logging
 @mcp.tool()
@@ -2026,6 +2106,10 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
     Returns:
         JSON response with resources data or error message
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_resources_for_beneficiary called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     try:
         # Validate mandatory fields using helper
         error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
@@ -2081,8 +2165,6 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
   }}
 }}"""
 
-        logger.debug(f"GraphQL query: {query}")
-
         # Execute GraphQL request with caching support
         result = await _execute_graphql_request_cached(
             query, impersonate_user, bearer_token=bearer_token, use_cache=True
@@ -2129,6 +2211,11 @@ async def get_resources_for_beneficiary(identity_id: str, impersonate_user: str,
             beneficiary_id=identity_id,
             impersonated_user=impersonate_user
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_resources_for_beneficiary | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
@@ -2172,15 +2259,25 @@ async def get_requestable_resources(identity_id: str, impersonate_user: str, bea
     Returns:
         JSON response with list of requestable resources
     """
-    # This is just an alias that calls the main function
-    return await get_resources_for_beneficiary(
-        identity_id=identity_id,
-        impersonate_user=impersonate_user,
-        system_id=system_id,
-        context_id=context_id,
-        resource_name=resource_name,
-        bearer_token=bearer_token
-    )
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_requestable_resources called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
+    try:
+        # This is just an alias that calls the main function
+        return await get_resources_for_beneficiary(
+            identity_id=identity_id,
+            impersonate_user=impersonate_user,
+            system_id=system_id,
+            context_id=context_id,
+            resource_name=resource_name,
+            bearer_token=bearer_token
+        )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_requestable_resources | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
@@ -2214,6 +2311,10 @@ async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: st
     Returns:
         JSON response with identities data including pagination metadata or error message
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_identities_for_beneficiary called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     # ENTRY LOGGING
     logger.debug(f"DEBUG: ENTRY - get_identities_for_beneficiary(impersonate_user={impersonate_user}, page={page}, rows={rows})")
 
@@ -2248,8 +2349,6 @@ async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: st
     }}
   }}
 }}"""
-
-        logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request with caching support
         result = await _execute_graphql_request_cached(
@@ -2300,6 +2399,11 @@ async def get_identities_for_beneficiary(impersonate_user: str, bearer_token: st
             message=str(e),
             impersonated_user=impersonate_user
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_identities_for_beneficiary | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
@@ -2325,6 +2429,14 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
     IMPORTANT LLM INSTRUCTIONS - When to Use This Tool:
         USE THIS TOOL (GraphQL) when the user asks for assignments with ANY of these patterns:
 
+        COMPLIANCE DETAILED Queries (USE THIS TOOL, NOT OData):
+        - "Show me detailed compliance issues for {person}"
+        - "What compliance violations does {person} have?"
+        - "Show full compliance details for {person}"
+        - "Get detailed compliance information for {person}"
+        - "Show me all violation details for {person}"
+        - "What are the compliance reasons for {person}?"
+
         System Name Queries:
         - "Get me all the assignments in system {X}" (e.g., "in system AD", "in Active Directory")
         - "Show assignments for {person} in system {X}"
@@ -2340,6 +2452,9 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
         - "List assignments for account name {NAME}"
         - "Show me what {account} has access to"
         - Any query that filters by account_name parameter
+
+        CRITICAL: For ANY compliance-related query (summary or detailed), use THIS GraphQL tool, NOT OData.
+        This tool returns complianceStatus, violations, and reason fields.
 
         DO NOT use OData query_calculated_assignments or query_omada_entity for these requests.
         This GraphQL tool has system_name and account_name filters that are more efficient and provide richer data.
@@ -2418,6 +2533,9 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
         - assignments_returned: Number of assignments in current page
         - data: Array of assignment objects for current page
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+
     # WORKAROUND: Manually set logger level since decorator isn't working for this function
     old_level = logger.level
     old_handler_levels = [(handler, handler.level) for handler in logger.handlers]
@@ -2429,6 +2547,7 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
         handler.setLevel(new_level)
 
     # ENTRY LOGGING
+    logger.info(f"TOOL START - get_calculated_assignments_detailed called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
     logger.debug(f"DEBUG: ENTRY - get_calculated_assignments_detailed(identity_ids={identity_ids}, impersonate_user={impersonate_user}, resource_type_name={resource_type_name}, compliance_status={compliance_status}, account_name={account_name}, system_name={system_name}, identity_name={identity_name}, page={page}, rows={rows})")
 
     try:
@@ -2584,8 +2703,6 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
   }}
 }}"""
 
-        logger.debug(f"GraphQL query: {query}")
-
         # Execute GraphQL request with version 2.19 WITH CACHING
         result = await _execute_graphql_request_cached(
             query,
@@ -2643,7 +2760,277 @@ async def get_calculated_assignments_detailed(identity_ids: str, impersonate_use
             impersonated_user=impersonate_user
         )
     finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_calculated_assignments_detailed | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
+
         # Restore logger levels (workaround for decorator not working)
+        logger.setLevel(old_level)
+        for handler, level in old_handler_levels:
+            handler.setLevel(level)
+
+
+@with_function_logging
+@mcp.tool()
+async def get_calculated_assignments_summary(identity_ids: str, impersonate_user: str, bearer_token: str,
+                                            system_name: str = None,
+                                            system_name_operator: str = "CONTAINS",
+                                            compliance_status: str = None,
+                                            compliance_status_operator: str = "CONTAINS",
+                                            sort_by: str = "RESOURCE_NAME",
+                                            page: int = 1,
+                                            rows: int = 20,
+                                            use_cache: bool = True) -> str:
+    """
+    Get SUMMARY view of calculated assignments (FAST - optimized for quick listing).
+
+    This is a LIGHTWEIGHT version of get_calculated_assignments_detailed that:
+    - Returns fewer fields (only essential display information)
+    - Uses smaller default page size (20 vs 50)
+    - Perfect for initial listing before drilling into details
+
+    IMPORTANT LLM INSTRUCTIONS - When to Use This Tool:
+        USE THIS TOOL when user asks about ACCESS RIGHTS, ASSIGNMENTS, or COMPLIANCE:
+
+        Access Rights Summary Queries:
+        - "What access rights does {person} have?"
+        - "Show me {person}'s access rights"
+        - "What can {person} access?"
+        - "List access for {person}"
+        - "Show me what {person} has access to"
+        - "What are {person}'s permissions?"
+        - "What resources does {person} have?"
+        - "Summary of {person}'s access"
+        - "Quick view of {person}'s assignments"
+
+        Assignment Listing Queries:
+        - "Show assignments for {person}"
+        - "List {person}'s assignments"
+        - "Get assignments for {person}"
+        - "What assignments does {person} have?"
+
+        COMPLIANCE Queries (USE THIS TOOL, NOT OData):
+        - "Show me compliance issues for {person}"
+        - "What compliance problems does {person} have?"
+        - "Are there any compliance violations for {person}?"
+        - "Show compliance status for {person}"
+        - "Does {person} have any compliance issues?"
+        - "Check compliance for {person}"
+
+        System-Filtered Queries:
+        - "What access does {person} have in {system}?"
+        - "Show {person}'s access rights in {system}"
+        - "List {person}'s permissions for {system}"
+
+        CRITICAL: For ANY compliance-related query, use THIS GraphQL tool, NOT OData functions.
+        This tool returns complianceStatus field showing approval/violation status.
+
+        IMPORTANT: After showing the summary results, ALWAYS inform the user:
+        "A detailed view with compliance violations and justification reasons is available
+        if you wish to see more information. Just ask for 'detailed view' or 'full details'."
+
+    USE THIS FUNCTION when:
+    - User wants to see a quick list of assignments or access rights
+    - Initial display/overview is needed
+    - Performance is critical
+    - Don't need violation details, reason details, or nested objects
+
+    USE get_calculated_assignments_detailed when:
+    - User explicitly asks for "detailed view", "full details", or "more information"
+    - User needs full details including violations and reasons
+    - Compliance analysis requires detailed information
+    - Filtering by account_name, resource_type_name, or identity_name
+
+    REQUIRED PARAMETERS:
+        identity_ids: One or more identity UIds (32-character GUIDs)
+                     Example: "e3e869c4-369a-476e-a969-d57059d0b1e4"
+        impersonate_user: Email address (e.g., "user@domain.com")
+        bearer_token: OAuth2 bearer token
+
+    Optional parameters:
+        system_name: Filter by system name (e.g., "AD", "Active Directory")
+        system_name_operator: Operator for system filter (default: "CONTAINS")
+        compliance_status: Filter by compliance status (e.g., "APPROVED", "NOT APPROVED")
+        compliance_status_operator: Operator for compliance filter (default: "CONTAINS")
+        sort_by: Field to sort by (default: "RESOURCE_NAME")
+        page: Page number (default: 1)
+        rows: Rows per page (default: 20, max: 100)
+        use_cache: Enable caching (default: True)
+
+    Returns:
+        JSON with assignments summary including:
+        - resource name and id
+        - identity display name
+        - account name and system name
+        - compliance status
+        - disabled flag
+    """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+
+    # WORKAROUND: Manually set logger level
+    old_level = logger.level
+    old_handler_levels = [(handler, handler.level) for handler in logger.handlers]
+
+    func_log_level = os.getenv("LOG_LEVEL_get_calculated_assignments_summary", LOG_LEVEL).upper()
+    new_level = getattr(logging, func_log_level, logging.INFO)
+    logger.setLevel(new_level)
+    for handler in logger.handlers:
+        handler.setLevel(new_level)
+
+    logger.info(f"TOOL START - get_calculated_assignments_summary called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+    logger.debug(f"DEBUG: ENTRY - get_calculated_assignments_summary(identity_ids={identity_ids}, system_name={system_name}, compliance_status={compliance_status}, page={page}, rows={rows})")
+
+    try:
+        # Validate mandatory fields
+        error = validate_required_fields(identity_ids=identity_ids, impersonate_user=impersonate_user, bearer_token=bearer_token)
+        if error:
+            return error
+
+        # Validate pagination (max 100 for summary view)
+        if page < 1:
+            return build_error_response(
+                error_type="InvalidPaginationParameter",
+                message=f"Invalid page number: {page}. Page must be >= 1.",
+                impersonated_user=impersonate_user
+            )
+
+        if rows < 1 or rows > 100:
+            return build_error_response(
+                error_type="InvalidPaginationParameter",
+                message=f"Invalid rows per page: {rows}. Rows must be between 1 and 100.",
+                impersonated_user=impersonate_user
+            )
+
+        # Build filters
+        filters = [f'multipleIdentityIds: "{identity_ids}"']
+
+        if system_name and system_name.strip():
+            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
+            if system_name_operator not in valid_operators:
+                return build_error_response(
+                    error_type="InvalidOperator",
+                    message=f"Invalid system_name_operator: {system_name_operator}. Valid values are: {', '.join(valid_operators)}",
+                    impersonated_user=impersonate_user
+                )
+            filters.append(f'systemName: {{filterValue: "{system_name}", operator: {system_name_operator}}}')
+
+        if compliance_status and compliance_status.strip():
+            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
+            if compliance_status_operator not in valid_operators:
+                return build_error_response(
+                    error_type="InvalidOperator",
+                    message=f"Invalid compliance_status_operator: {compliance_status_operator}. Valid values are: {', '.join(valid_operators)}",
+                    impersonated_user=impersonate_user
+                )
+            filters.append(f'complianceStatus: {{filterValue: "{compliance_status}", operator: {compliance_status_operator}}}')
+
+        filters_string = ', '.join(filters)
+
+        # Validate sort_by
+        valid_sort_options = [
+            "RESOURCE_NAME", "IDENTITY_NAME", "ACCOUNT_NAME", "RESOURCE_TYPE",
+            "COMPLIANCE_STATUS", "SYSTEM_NAME", "VALID_FROM", "VALID_TO",
+            "DISABLED", "VIOLATION_STATUS"
+        ]
+        if sort_by not in valid_sort_options:
+            return build_error_response(
+                error_type="InvalidSortOption",
+                message=f"Invalid sort_by: {sort_by}. Valid values are: {', '.join(valid_sort_options)}",
+                impersonated_user=impersonate_user
+            )
+
+        # Build LIGHTWEIGHT GraphQL query (minimal fields for fast response)
+        query = f"""query GetCalculatedAssignmentsSummary {{
+  calculatedAssignments(
+    sorting: {{sortOrder: ASCENDING, sortBy: {sort_by}}}
+    pagination: {{page: {page}, rows: {rows}}}
+    filters: {{{filters_string}}}
+  ) {{
+    pages
+    total
+    data {{
+      complianceStatus
+      disabled
+      validFrom
+      validTo
+      resource {{
+        name
+      }}
+      account {{
+        accountName
+        system {{
+          name
+        }}
+      }}
+    }}
+  }}
+}}"""
+
+        # Execute GraphQL request WITH CACHING
+        result = await _execute_graphql_request_cached(
+            query,
+            impersonate_user,
+            graphql_version="2.19",
+            bearer_token=bearer_token,
+            use_cache=use_cache
+        )
+
+        if result["success"]:
+            data = result["data"]
+            if ('data' in data and 'calculatedAssignments' in data['data']):
+                calculated_assignments = data['data']['calculatedAssignments']
+                assignments_data = calculated_assignments.get('data', [])
+                total = calculated_assignments.get('total', 0)
+                pages = calculated_assignments.get('pages', 0)
+
+                return build_success_response(
+                    data=assignments_data,
+                    endpoint=result["endpoint"],
+                    identity_ids=identity_ids,
+                    impersonated_user=impersonate_user,
+                    system_name=system_name,
+                    compliance_status=compliance_status,
+                    total_assignments=total,
+                    pages=pages,
+                    current_page=page,
+                    rows_per_page=rows,
+                    assignments_returned=len(assignments_data),
+                    query_type="summary",
+                    note="This is a lightweight summary. Use get_calculated_assignments_detailed for full details.",
+                    assignments=assignments_data
+                )
+            else:
+                return build_error_response(
+                    error_type="NoAssignmentsFound",
+                    message="No calculated assignments found in response",
+                    identity_ids=identity_ids,
+                    impersonated_user=impersonate_user,
+                    response=data
+                )
+        else:
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                identity_ids=identity_ids,
+                impersonated_user=impersonate_user
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            identity_ids=identity_ids,
+            impersonated_user=impersonate_user
+        )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_calculated_assignments_summary | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
+
+        # Restore logger levels
         logger.setLevel(old_level)
         for handler, level in old_handler_levels:
             handler.setLevel(level)
@@ -2691,15 +3078,18 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
         - Personal: id="a1b2c3d4-..."
         - Finance Department: id="e5f6g7h8-..."
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_identity_contexts called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     # ENTRY LOGGING
     logger.debug(f"DEBUG: ENTRY - get_identity_contexts(identity_id={identity_id}, impersonate_user={impersonate_user})")
 
-    # Validate mandatory fields
-    error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
-    if error:
-        return error
-
     try:
+        # Validate mandatory fields
+        error = validate_required_fields(identity_id=identity_id, impersonate_user=impersonate_user)
+        if error:
+            return error
         logger.debug(f"get_identity_contexts called with identity_id={identity_id}, impersonate_user={impersonate_user}")
         logger.debug(f"Validation passed, building GraphQL query for identity_id: {identity_id}")
 
@@ -2713,8 +3103,6 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
     }}
   }}
 }}"""
-
-        logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request with caching support
         result = await _execute_graphql_request_cached(
@@ -2760,6 +3148,11 @@ async def get_identity_contexts(identity_id: str, impersonate_user: str, bearer_
             identity_id=identity_id,
             impersonated_user=impersonate_user
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_identity_contexts | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
@@ -2799,6 +3192,10 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
         JSON response with pending approval survey questions including resource and system details,
         or error message if the request fails
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_pending_approvals called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     # ENTRY LOGGING
     logger.debug(f"DEBUG: ENTRY - get_pending_approvals(impersonate_user={impersonate_user}, workflow_step={workflow_step}, summary_mode={summary_mode})")
 
@@ -2850,8 +3247,6 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
     }}
   }}
 }}"""
-
-        logger.debug(f"GraphQL query: {query}")
 
         # Execute GraphQL request with version 3.0 and caching support
         result = await _execute_graphql_request_cached(
@@ -2914,6 +3309,11 @@ async def get_pending_approvals(impersonate_user: str, bearer_token: str,
             impersonated_user=impersonate_user,
             workflow_step_filter=workflow_step if workflow_step else "none"
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_pending_approvals | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
@@ -2938,16 +3338,26 @@ async def get_approval_details(impersonate_user: str, bearer_token: str,
     Returns:
         JSON response with FULL approval details including surveyId and surveyObjectKey
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_approval_details called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     # ENTRY LOGGING
     logger.debug(f"DEBUG: ENTRY - get_approval_details(impersonate_user={impersonate_user}, workflow_step={workflow_step})")
 
-    # Call get_pending_approvals with summary_mode=False to get all fields
-    return await get_pending_approvals(
-        impersonate_user=impersonate_user,
-        bearer_token=bearer_token,
-        workflow_step=workflow_step,
-        summary_mode=False  # Get full details including technical IDs
-    )
+    try:
+        # Call get_pending_approvals with summary_mode=False to get all fields
+        return await get_pending_approvals(
+            impersonate_user=impersonate_user,
+            bearer_token=bearer_token,
+            workflow_step=workflow_step,
+            summary_mode=False  # Get full details including technical IDs
+        )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_approval_details | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
@@ -2987,6 +3397,10 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
     Returns:
         JSON response with approval submission result or error message
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - make_approval_decision called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     try:
         # Validate mandatory fields using helper
         error = validate_required_fields(
@@ -3089,6 +3503,11 @@ async def make_approval_decision(impersonate_user: str, survey_id: str,
             survey_object_key=survey_object_key if 'survey_object_key' in locals() else "N/A",
             decision=decision if 'decision' in locals() else "N/A"
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - make_approval_decision | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
@@ -3115,6 +3534,10 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
         - complianceStatus: Array of {name, value} objects
         - surveyTemplates: Array of survey template objects with id, name, type, systemName, and surveyInitiationActivityId
     """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_compliance_workbench_survey_and_compliance_status called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
     try:
         # Validate mandatory field using helper
         error = validate_required_fields(impersonate_user=impersonate_user)
@@ -3138,14 +3561,13 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
   }
 }"""
 
-        logger.debug(f"GraphQL query: {query}")
-
-        # Execute GraphQL request with version 3.0
-        result = await _execute_graphql_request(
+        # Execute GraphQL request with version 3.0 and caching support
+        result = await _execute_graphql_request_cached(
+            query,
             impersonate_user,
-            omada_base_url,
             graphql_version="3.0",
-            bearer_token=bearer_token
+            bearer_token=bearer_token,
+            use_cache=True
         )
 
         if result["success"]:
@@ -3188,6 +3610,169 @@ async def get_compliance_workbench_survey_and_compliance_status(impersonate_user
             message=str(e),
             impersonated_user=impersonate_user
         )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_compliance_workbench_survey_and_compliance_status | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
+
+
+@with_function_logging
+@mcp.tool()
+async def get_compliance_workbench_data(impersonate_user: str, bearer_token: str,
+                                        show_accounts: bool = True,
+                                        is_application_accounts_system_visible: bool = False) -> str:
+    """
+    Get compliance workbench data showing compliance status summaries by system from Omada GraphQL API.
+
+    This function retrieves compliance data for all systems including:
+    - System information (id, name, category)
+    - Compliance status counts for each system:
+      - explicitlyApproved: Number of explicitly approved assignments
+      - implicitlyApproved: Number of implicitly approved assignments
+      - implicitlyAssigned: Number of implicitly assigned assignments
+      - inViolation: Number of assignments in violation
+      - none: Number of assignments with no status
+      - notApproved: Number of not approved assignments
+      - orphaned: Number of orphaned assignments
+      - pendingDeprovisioning: Number of assignments pending deprovisioning
+
+    USE THIS FUNCTION when user asks to:
+    - "Show compliance status by system"
+    - "How many violations per system"
+    - "Compliance workbench summary"
+    - "Show compliance data"
+    - "Which systems have violations"
+    - "Compliance status overview"
+
+    IMPORTANT: This function requires 2 mandatory parameters. If missing,
+    you MUST prompt the user to provide them before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+
+    Optional parameters:
+        show_accounts: Whether to show account-level data (default: True)
+        is_application_accounts_system_visible: Whether application accounts systems are visible (default: False)
+
+    Returns:
+        JSON response with compliance workbench data including:
+        - systems: Array of system objects with compliance status counts
+        - total_systems: Total number of systems returned
+    """
+    # PERFORMANCE TIMING: Record start time
+    start_time = datetime.now()
+    logger.info(f"TOOL START - get_compliance_workbench_data called at {start_time.strftime('%H:%M:%S.%f')[:-3]}")
+
+    # ENTRY LOGGING
+    logger.debug(f"DEBUG: ENTRY - get_compliance_workbench_data(impersonate_user={impersonate_user}, show_accounts={show_accounts}, is_application_accounts_system_visible={is_application_accounts_system_visible})")
+
+    try:
+        # Validate mandatory field using helper
+        error = validate_required_fields(impersonate_user=impersonate_user)
+        if error:
+            return error
+
+        # Convert boolean parameters to lowercase strings for GraphQL
+        show_accounts_str = str(show_accounts).lower()
+        is_visible_str = str(is_application_accounts_system_visible).lower()
+
+        # Build GraphQL query with filters
+        query = f"""query GetComplianceWorkbenchData {{
+  complianceWorkbenchData(
+    filters: {{showAccounts: {show_accounts_str}, isApplicationAccountsSystemVisible: {is_visible_str}}}
+  ) {{
+    system {{
+      id
+      name
+      systemCategory {{
+        displayName
+        policyDefinitions
+      }}
+    }}
+    complianceStatus {{
+      explicitlyApproved
+      implicitlyApproved
+      implicitlyAssigned
+      inViolation
+      none
+      notApproved
+      orhpaned
+      pendingDeprovisioning
+    }}
+  }}
+}}"""
+
+        logger.debug(f"Filters: showAccounts={show_accounts}, isApplicationAccountsSystemVisible={is_application_accounts_system_visible}")
+
+        # Execute GraphQL request with version 3.0 and caching support
+        result = await _execute_graphql_request_cached(
+            query,
+            impersonate_user,
+            graphql_version="3.0",
+            bearer_token=bearer_token,
+            use_cache=True
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract compliance workbench data from the GraphQL response
+            if ('data' in data and 'complianceWorkbenchData' in data['data']):
+                workbench_data = data['data']['complianceWorkbenchData']
+
+                # Calculate summary statistics
+                total_systems = len(workbench_data)
+                systems_with_violations = sum(1 for item in workbench_data
+                                             if item.get('complianceStatus', {}).get('inViolation', 0) > 0)
+                total_violations = sum(item.get('complianceStatus', {}).get('inViolation', 0)
+                                      for item in workbench_data)
+                total_not_approved = sum(item.get('complianceStatus', {}).get('notApproved', 0)
+                                        for item in workbench_data)
+
+                return build_success_response(
+                    data=workbench_data,
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    summary={
+                        "total_systems": total_systems,
+                        "systems_with_violations": systems_with_violations,
+                        "total_violations": total_violations,
+                        "total_not_approved": total_not_approved
+                    },
+                    filters={
+                        "show_accounts": show_accounts,
+                        "is_application_accounts_system_visible": is_application_accounts_system_visible
+                    }
+                )
+            else:
+                return build_error_response(
+                    error_type="NoDataFound",
+                    message="No compliance workbench data found in response",
+                    impersonated_user=impersonate_user,
+                    response=data
+                )
+        else:
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user
+        )
+    finally:
+        # PERFORMANCE TIMING: Calculate and log execution time
+        end_time = datetime.now()
+        elapsed_time = (end_time - start_time).total_seconds()
+        logger.info(f"TOOL END - get_compliance_workbench_data | START: {start_time.strftime('%H:%M:%S.%f')[:-3]} | END: {end_time.strftime('%H:%M:%S.%f')[:-3]} | DURATION: {elapsed_time:.3f} seconds")
 
 
 @with_function_logging
