@@ -861,6 +861,9 @@ async def query_omada_identity(
         - UId: 32-character GUID (for internal use in subsequent API calls - don't display to user)
         - DISPLAYNAME, FIRSTNAME, LASTNAME, EMAIL: User-friendly display fields
         - EMPLOYEEID, DEPARTMENT, STATUS: Additional identity attributes
+
+    Schema Reference:
+        For complete field definitions, types, and examples, query: schema://omada/identity
     """
     # Build filters dictionary for clean API
     filters = {}
@@ -929,6 +932,9 @@ async def query_omada_resources(
 
     Returns:
         JSON response with resource data or error message
+
+    Schema Reference:
+        For complete Resource field definitions: schema://omada/resource
     """
     # Build filters dictionary for clean API
     filters = {}
@@ -1040,6 +1046,10 @@ async def query_calculated_assignments(
 
     Returns:
         JSON response with calculated assignments data or error message
+
+    Schema Reference:
+        For Identity field definitions: schema://omada/identity
+        For Resource field definitions: schema://omada/resource
     """
     # Build filters dictionary for clean API
     filters = {}
@@ -2687,6 +2697,11 @@ async def get_calculated_assignments_detailed(
         - rows_per_page: Number of rows per page
         - assignments_returned: Number of assignments in current page
         - data: Array of assignment objects for current page
+
+    Schema Reference:
+        For Identity field definitions: schema://omada/identity
+        For Resource field definitions: schema://omada/resource
+        Query schema://omada/entities to see all available schemas.
     """
     # WORKAROUND: Manually set logger level since decorator isn't working for this function
     old_level = logger.level

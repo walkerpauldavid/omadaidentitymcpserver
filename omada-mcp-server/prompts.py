@@ -736,6 +736,72 @@ I'll highlight:
 4. Email address to impersonate for the queries
 """
 
+    @mcp.prompt()
+    def schema_reference_guide():
+        """
+        Guide for understanding Omada entity schemas and data structures.
+
+        This prompt explains how to use MCP schema resources to understand
+        the data structures returned by Omada APIs.
+        """
+        return """I'll help you understand Omada entity schemas and data structures.
+
+**Available Schema Resources:**
+
+Query these URIs to get complete field definitions:
+
+| URI | Entity | Description |
+|-----|--------|-------------|
+| schema://omada/entities | All | List of all available schemas |
+| schema://omada/identity | Identity | Users, employees, service accounts |
+| schema://omada/resource | Resource | Roles, permissions, access rights |
+
+**How to Use Schemas:**
+
+**1. Before Querying Data**
+Check the schema to understand:
+- Field names (exact case matters!)
+- Field types (string, integer, GUID, etc.)
+- Which fields are references to other entities
+- Common query examples
+
+**2. Identity Schema Highlights:**
+- **UId**: 32-character GUID - USE THIS for GraphQL identity_ids parameter
+- **Id**: Integer database ID - use for OData identity_id parameter
+- **IDENTITYID**: Human-readable login (e.g., "ROBWOL") - NOT for API queries
+- **EMAIL**: Primary email (use exact field name "EMAIL", not "email")
+- **FIRSTNAME**, **LASTNAME**: Name fields (uppercase!)
+
+**3. Resource Schema Highlights:**
+- **UId**: 32-character GUID - USE THIS for resource_ids parameter
+- **Id**: Integer database ID
+- **NAME**: Resource name
+- **SYSTEMREF**: Reference to the system this resource belongs to
+- **RISKSCORE**, **RISKLEVEL**: Risk information
+- **RESOURCESTATUS**: Current status (Active, Inactive, etc.)
+
+**Common Mistakes to Avoid:**
+
+❌ Using "Id" instead of "UId" for GraphQL queries
+❌ Using "IDENTITYID" (login name) instead of "UId"
+❌ Using lowercase field names (use "EMAIL" not "email")
+❌ Forgetting that references are objects with nested fields
+
+**Query Schema Example:**
+To see all Identity fields with types and examples:
+- Fetch: schema://omada/identity
+
+To see all Resource fields:
+- Fetch: schema://omada/resource
+
+**Pro Tips:**
+- Always use UId (GUID format) for GraphQL tools like get_calculated_assignments_detailed
+- Field names are UPPERCASE in OData queries
+- Reference fields (like SYSTEMREF) are objects with Id, UId, and DisplayName
+
+Would you like me to fetch a specific schema for you?
+"""
+
     print(
-        "Registered 11 MCP prompts: request_access_workflow, approve_requests_workflow, search_identity_workflow, review_assignments_workflow, authentication_workflow, troubleshooting_workflow, bulk_access_request_workflow, compliance_audit_workflow, resource_discovery_workflow, identity_context_workflow, compare_identities_workflow"
+        "Registered 12 MCP prompts: request_access_workflow, approve_requests_workflow, search_identity_workflow, review_assignments_workflow, authentication_workflow, troubleshooting_workflow, bulk_access_request_workflow, compliance_audit_workflow, resource_discovery_workflow, identity_context_workflow, compare_identities_workflow, schema_reference_guide"
     )
