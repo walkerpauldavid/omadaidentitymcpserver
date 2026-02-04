@@ -244,6 +244,11 @@ from completions import register_completions
 
 register_completions(mcp)
 
+# Register MCP Resources for entity schema definitions
+from schemas import register_schemas
+
+register_schemas(mcp)
+
 
 def _get_omada_base_url(omada_base_url: str = None) -> str:
     """
