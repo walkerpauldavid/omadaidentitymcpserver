@@ -288,15 +288,371 @@ RESOURCE_SCHEMA = {
     }
 }
 
-# Identity entity schema definition
+# Identity entity schema definition based on Omada OData API
 IDENTITY_SCHEMA = {
     "entity": "Identity",
-    "description": "Represents a person or service account identity in Omada Identity.",
+    "description": "Represents a person or service account identity in Omada Identity. This is the core entity for users, employees, contractors, and service accounts.",
     "odata_endpoint": "/OData/DataObjects/Identity",
     "fields": {
-        # Placeholder - will be populated with Identity fields
+        # Core identification fields
+        "Id": {
+            "type": "integer",
+            "description": "Internal database ID (numeric). Use for OData queries with identity_id parameter.",
+            "example": 1025952
+        },
+        "UId": {
+            "type": "string (GUID)",
+            "description": "Unique identifier (32-character GUID with dashes). Use for GraphQL queries with identity_ids parameter. THIS IS THE FIELD TO USE FOR get_calculated_assignments_detailed.",
+            "example": "f847738e-a96f-4ddc-ba0c-e1dd408ff469"
+        },
+        "IDENTITYID": {
+            "type": "string",
+            "description": "Human-readable identity identifier (username/login). NOT for GraphQL queries - use UId instead.",
+            "example": "PAUWAL"
+        },
+        "DisplayName": {
+            "type": "string",
+            "description": "Full display name of the identity.",
+            "example": "Paul Walker"
+        },
+
+        # Personal information
+        "FIRSTNAME": {
+            "type": "string",
+            "description": "First name of the identity.",
+            "example": "Paul"
+        },
+        "LASTNAME": {
+            "type": "string",
+            "description": "Last name/surname of the identity.",
+            "example": "Walker"
+        },
+        "EMAIL": {
+            "type": "string",
+            "description": "Primary email address.",
+            "example": "pawa@omada.net"
+        },
+        "EMAIL2": {
+            "type": "string",
+            "description": "Secondary/alternate email address.",
+            "example": ""
+        },
+        "JOBTITLE": {
+            "type": "string",
+            "description": "Job title as free text.",
+            "example": "Software Engineer"
+        },
+        "JOBTITLE_REF": {
+            "type": "object (reference) or null",
+            "description": "Reference to job title master data.",
+            "example": None
+        },
+        "CELLPHONE": {
+            "type": "string",
+            "description": "Mobile/cell phone number.",
+            "example": "+1-555-123-4567"
+        },
+        "BIRTHDAY": {
+            "type": "datetime (ISO 8601) or null",
+            "description": "Date of birth.",
+            "example": None
+        },
+        "GENDER": {
+            "type": "object (reference) or null",
+            "description": "Gender reference.",
+            "example": None
+        },
+
+        # Address fields
+        "ADDRESS1": {
+            "type": "string",
+            "description": "Primary address line.",
+            "example": "123 Main Street"
+        },
+        "ADDRESS2": {
+            "type": "string",
+            "description": "Secondary address line.",
+            "example": "Suite 100"
+        },
+        "CITY": {
+            "type": "string",
+            "description": "City name.",
+            "example": "New York"
+        },
+        "STATE_REGION": {
+            "type": "string",
+            "description": "State or region.",
+            "example": "NY"
+        },
+        "ZIPCODE": {
+            "type": "string",
+            "description": "Postal/ZIP code.",
+            "example": "10001"
+        },
+        "COUNTRY": {
+            "type": "object (reference) or null",
+            "description": "Country reference.",
+            "example": None
+        },
+
+        # Timestamps
+        "CreateTime": {
+            "type": "datetime (ISO 8601)",
+            "description": "When the identity was created.",
+            "example": "2025-07-08T15:06:43.4174565Z"
+        },
+        "ChangeTime": {
+            "type": "datetime (ISO 8601)",
+            "description": "When the identity was last modified.",
+            "example": "2025-07-08T15:07:02.6521765Z"
+        },
+        "DeleteTime": {
+            "type": "datetime (ISO 8601)",
+            "description": "When the identity was deleted (if Deleted=true).",
+            "example": "0001-01-01T00:00:00Z"
+        },
+
+        # Status and validity
+        "Deleted": {
+            "type": "boolean",
+            "description": "Whether the identity has been soft-deleted.",
+            "example": False
+        },
+        "IDENTITYSTATUS": {
+            "type": "object (reference)",
+            "description": "Current status of the identity (Active, Inactive, Terminated, etc.).",
+            "example": {"Id": 551, "UId": "a4ed4124-9b94-43a0-92c0-e71fba733049", "Value": "Active"}
+        },
+        "VALIDFROM": {
+            "type": "datetime (ISO 8601)",
+            "description": "Start date when the identity becomes valid/active.",
+            "example": "2025-06-30T22:00:00Z"
+        },
+        "VALIDTO": {
+            "type": "datetime (ISO 8601)",
+            "description": "End date when the identity expires/terminates.",
+            "example": "9999-12-30T23:00:00Z"
+        },
+
+        # Classification
+        "IDENTITYCATEGORY": {
+            "type": "object (reference)",
+            "description": "Category of identity (Employee, Contractor, External, Service Account, etc.).",
+            "example": {"Id": 560, "UId": "ac0c67fc-5f47-4112-94e6-446bfb68326a", "Value": "Employee"}
+        },
+        "IDENTITYTYPE": {
+            "type": "object (reference)",
+            "description": "Type of identity (Primary, Secondary, Service, etc.).",
+            "example": {"Id": 580, "UId": "d13624f9-905d-4bc5-a6cc-2a4589c26be4", "Value": "Primary"}
+        },
+
+        # Risk and compliance
+        "RISKSCORE": {
+            "type": "integer",
+            "description": "Numeric risk score for the identity (higher = more risky).",
+            "example": 147
+        },
+        "RISKLEVEL": {
+            "type": "object (reference)",
+            "description": "Risk level classification (Low, Medium, High, Critical).",
+            "example": {"Id": 1000239, "UId": "ee65fc68-f108-4fd1-b738-715b8f6e430f", "Value": "Medium"}
+        },
+        "IDENTSODRECALCSURV": {
+            "type": "datetime or null",
+            "description": "Last SoD recalculation survey date.",
+            "example": None
+        },
+        "IDENT_RELAUNCHSOD": {
+            "type": "datetime or null",
+            "description": "SoD relaunch date.",
+            "example": None
+        },
+
+        # Organizational references
+        "OUREF": {
+            "type": "object (reference)",
+            "description": "Primary organizational unit reference.",
+            "example": {"Id": 1003843, "UId": "5d00d8a7-fa5d-46fe-a00b-6392a5fd12f4", "DisplayName": "Global Banking Group [GBG]"}
+        },
+        "PRIMARYCONTEXTTYPE": {
+            "type": "object (reference)",
+            "description": "Primary context type for the identity.",
+            "example": {"Id": 1001389, "UId": "9b334c8b-9159-407c-ae00-7371d2d1768c", "DisplayName": "Org. units"}
+        },
+        "DIVISION": {
+            "type": "object (reference) or null",
+            "description": "Division reference.",
+            "example": None
+        },
+        "BUSINESSUNIT": {
+            "type": "object (reference) or null",
+            "description": "Business unit reference.",
+            "example": None
+        },
+        "COMPANY": {
+            "type": "object (reference) or null",
+            "description": "Company reference.",
+            "example": None
+        },
+        "COSTCENTER": {
+            "type": "object (reference) or null",
+            "description": "Cost center reference.",
+            "example": None
+        },
+        "LOCATION": {
+            "type": "object (reference) or null",
+            "description": "Location reference.",
+            "example": None
+        },
+        "BUILDING": {
+            "type": "object (reference) or null",
+            "description": "Building reference.",
+            "example": None
+        },
+        "SUBAREA": {
+            "type": "object (reference) or null",
+            "description": "Sub-area reference.",
+            "example": None
+        },
+
+        # Relationships
+        "MANAGER": {
+            "type": "array (references)",
+            "description": "List of manager identity references.",
+            "example": []
+        },
+        "IDENTITYOWNER": {
+            "type": "object (reference) or null",
+            "description": "Owner of this identity (for service accounts, etc.).",
+            "example": None
+        },
+        "EXPLICITOWNER": {
+            "type": "array (references)",
+            "description": "List of explicitly assigned owners.",
+            "example": []
+        },
+        "EMPLOYMENTS": {
+            "type": "array",
+            "description": "List of employment records for this identity.",
+            "example": []
+        },
+
+        # External identifiers
+        "EMPLOYEEID": {
+            "type": "string",
+            "description": "Employee ID from HR system.",
+            "example": "EMP12345"
+        },
+        "EXTERNALUSERID": {
+            "type": "string",
+            "description": "External user ID.",
+            "example": ""
+        },
+        "OISID": {
+            "type": "integer",
+            "description": "Omada Identity Suite internal ID.",
+            "example": 33
+        },
+
+        # Social/External login IDs
+        "GOOGLEID": {
+            "type": "string",
+            "description": "Google account ID for SSO.",
+            "example": ""
+        },
+        "LIVEID": {
+            "type": "string",
+            "description": "Microsoft Live ID for SSO.",
+            "example": ""
+        },
+        "FACEBOOKID": {
+            "type": "string",
+            "description": "Facebook ID for SSO.",
+            "example": ""
+        },
+        "LINKEDINID": {
+            "type": "string",
+            "description": "LinkedIn ID for SSO.",
+            "example": ""
+        },
+
+        # Settings and preferences
+        "LANGUAGEID": {
+            "type": "string",
+            "description": "Preferred language ID.",
+            "example": "en-US"
+        },
+        "TIMEZONE": {
+            "type": "object (reference) or null",
+            "description": "Preferred timezone.",
+            "example": None
+        },
+        "NEWSLETTERFREQUENCY": {
+            "type": "object (reference) or null",
+            "description": "Newsletter frequency preference.",
+            "example": None
+        },
+        "PERSONALINTERESTS": {
+            "type": "array",
+            "description": "Personal interests for personalization.",
+            "example": []
+        },
+
+        # Security
+        "INITIALPASSWORD": {
+            "type": "string",
+            "description": "Initial password (typically empty after first login).",
+            "example": ""
+        },
+        "PWR_LOCKOUT": {
+            "type": "datetime or null",
+            "description": "Password reset lockout timestamp.",
+            "example": None
+        },
+
+        # Terms and compliance
+        "TERMSDOCPENDINGACCEPTANCE": {
+            "type": "object or null",
+            "description": "Terms document pending acceptance.",
+            "example": None
+        },
+        "TERMSDOCACCEPTANCES": {
+            "type": "array",
+            "description": "List of accepted terms documents.",
+            "example": []
+        },
+
+        # Custom/Extended fields
+        "CLT_TAGS": {
+            "type": "array",
+            "description": "Client-specific tags for categorization.",
+            "example": []
+        },
+
+        # Technical fields
+        "CurrentVersionId": {
+            "type": "integer",
+            "description": "Current version ID for optimistic concurrency.",
+            "example": 1048876
+        },
+        "ODWBUSIKEY": {
+            "type": "string",
+            "description": "Business key for data warehouse integration.",
+            "example": "1_<id>1025952</id>"
+        }
     },
-    "common_queries": {}
+    "important_notes": {
+        "UId_vs_Id_vs_IDENTITYID": "When using GraphQL tools like get_calculated_assignments_detailed, ALWAYS use the UId field (GUID format), NOT the Id (integer) or IDENTITYID (string username). This is a common mistake.",
+        "example_workflow": "1. Query identity by email/name using query_omada_identity, 2. Extract the UId field from the result, 3. Use that UId in identity_ids parameter for get_calculated_assignments_detailed"
+    },
+    "common_queries": {
+        "get_by_id": "Use query_omada_identity with filter_condition=\"Id eq {id}\"",
+        "get_by_uid": "Use query_omada_identity with filter_condition=\"UId eq '{uid}'\"",
+        "get_by_email": "Use query_omada_identity with filter_condition=\"EMAIL eq '{email}'\"",
+        "get_by_name": "Use query_omada_identity with filter_condition=\"contains(LASTNAME, '{name}')\" or \"contains(DisplayName, '{name}')\"",
+        "get_by_identity_id": "Use query_omada_identity with filter_condition=\"IDENTITYID eq '{identity_id}'\"",
+        "get_assignments": "First get the identity's UId, then use query_calculated_assignments or get_calculated_assignments_detailed with identity_ids parameter"
+    }
 }
 
 
