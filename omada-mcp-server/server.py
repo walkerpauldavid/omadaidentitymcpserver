@@ -354,6 +354,18 @@ def _summarize_entities(data: dict, entity_type: str) -> dict:
             "Resource",
         ],
         "AssignmentPolicy": ["Id", "DISPLAYNAME", "DESCRIPTION", "STATUS"],
+        "Orgunit": [
+            "Id",
+            "UId",
+            "DisplayName",
+            "NAME",
+            "OUID",
+            "OUTYPE",
+            "PARENTOU",
+            "MANAGER",
+            "EXPLICITOWNER",
+            "C_ADOU",
+        ],
     }
 
     # Get relevant fields for this entity type
@@ -408,7 +420,7 @@ def _summarize_graphql_data(data: list, data_type: str) -> list:
             "reason",
             "resourceAssignment",
         ],
-        "AccessRequest": ["id", "beneficiary", "resource", "status"],
+        "AccessRequest": ["id", "beneficiary", "resource", "status", "requestedBy", "reason", "validFrom", "validTo"],
         "CalculatedAssignment": ["complianceStatus", "account", "resource", "identity"],
         "Context": ["id", "displayName", "type"],
         "Resource": ["id", "name", "description", "system"],
@@ -471,6 +483,22 @@ async def query_omada_entity(
     """
     Generic query function for any Omada entity type (Identity, Resource, Role, etc).
 
+    IMPORTANT - $expand LIMITATION:
+        Omada OData does NOT support $expand on DataObjects endpoints (Identity, Resource,
+        Orgunit, Role, Account, Application, System, AssignmentPolicy).
+        $expand ONLY works on BuiltIn/CalculatedAssignments with: Identity, Resource, ResourceType.
+        Reference fields (e.g., MANAGER, OUTYPE, SYSTEMREF) are returned as inline nested objects
+        automatically — no $expand needed. The expand parameter will be IGNORED for DataObjects
+        entities to prevent 400 Bad Request errors.
+
+    IMPORTANT - any() LAMBDA FILTER NOT SUPPORTED:
+        Omada OData does NOT support the any() lambda operator on collection-type reference fields.
+        Filters like OWNERREF/any(o: o/Id eq 123), MANAGER/any(), CHILDROLES/any(),
+        EXPLICITOWNER/any(), MANUALOWNER/any(o: o/Id eq 123) will return 500 Internal Server Error.
+        This is a limitation of Omada's OData implementation (subset of OData spec).
+        DO NOT use any() or all() lambda expressions in $filter.
+        Workaround: Retrieve all records and filter client-side, or use GraphQL API instead.
+
     IMPORTANT - Key Identity Field Names (use EXACTLY as shown - all UPPERCASE):
 
         Core Fields:
@@ -485,11 +513,11 @@ async def query_omada_entity(
         - COMPANY (not "company")
         - STATUS (not "status")
 
-        Reference Fields (for expanding related data):
-        - JOBTITLE_REF (expands to full job title object with Id, DisplayName, etc.)
-        - COMPANY_REF (expands to full company/organization object)
-        - MANAGER_REF (expands to manager identity details)
-        - DEPARTMENT_REF (expands to full department object)
+        Reference Fields (returned as inline nested objects - DO NOT use $expand):
+        - JOBTITLE_REF (returns inline job title object with Id, DisplayName, etc.)
+        - COMPANY_REF (returns inline company/organization object)
+        - MANAGER_REF (returns inline manager identity details)
+        - DEPARTMENT_REF (returns inline department object)
 
         Other Important Fields:
         - UId (32-character GUID - use for identity_id in GraphQL functions)
@@ -497,10 +525,6 @@ async def query_omada_entity(
         - LOCATION (physical location/office)
         - COSTCENTER (cost center code)
         - TITLE (may be different from JOBTITLE in some configurations)
-
-    Example: Querying with field and expanding reference:
-        select_fields="FIRSTNAME,LASTNAME,EMAIL,JOBTITLE,IDENTITYID,UId"
-        expand="JOBTITLE_REF,COMPANY_REF,MANAGER_REF"
 
     Args:
         entity_type: Type of entity to query (Identity, Resource, Role, Account, etc)
@@ -517,9 +541,14 @@ async def query_omada_entity(
         summary_mode: If True, returns only key fields as a summary instead of full objects
         top: Maximum number of records to return (OData $top)
         skip: Number of records to skip (OData $skip)
-        select_fields: Comma-separated list of fields to select (OData $select)
+        select_fields: Comma-separated list of fields to select (OData $select).
+                WARNING: Only use with scalar fields (e.g., NAME, EMAIL, FIRSTNAME).
+                Using $select with reference/collection fields (e.g., MANAGER, SYSTEMREF,
+                OUTYPE, JOBTITLE_REF) returns EMPTY objects. Omit $select to get reference data.
         order_by: Field(s) to order by (OData $orderby)
-        expand: Comma-separated list of related entities to expand (OData $expand)
+        expand: Comma-separated list of related entities to expand (OData $expand).
+                ONLY supported for CalculatedAssignments (valid values: Identity, Resource, ResourceType).
+                Ignored for all other entity types (DataObjects endpoints do not support $expand).
         include_count: Include total count in response (adds $count=true)
         bearer_token: Optional bearer token to use instead of acquiring a new one
         impersonate_user: Optional email address for user impersonation (required for user-delegated tokens)
@@ -547,10 +576,10 @@ async def query_omada_entity(
             "custom_filter": "STATUS eq 'ACTIVE'"
         })
 
-        # CalculatedAssignments for specific identity
+        # CalculatedAssignments for specific identity (expand IS supported here)
         await query_omada_entity("CalculatedAssignments", filters={
             "identity_id": 1006500
-        })
+        }, expand="Identity,Resource,ResourceType")
 
         # Count only with custom filter
         await query_omada_entity("Identity",
@@ -572,6 +601,7 @@ async def query_omada_entity(
             "System",
             "CalculatedAssignments",
             "AssignmentPolicy",
+            "Orgunit",
         ]
         if entity_type not in valid_entities:
             return f"❌ Invalid entity type '{entity_type}'. Valid types: {', '.join(valid_entities)}"
@@ -666,8 +696,18 @@ async def query_omada_entity(
                 query_params["$select"] = select_fields
             if order_by:
                 query_params["$orderby"] = order_by
+            # IMPORTANT: $expand is ONLY supported on BuiltIn endpoints (e.g., CalculatedAssignments).
+            # DataObjects endpoints (Identity, Resource, Orgunit, Role, etc.) return reference
+            # fields as inline nested objects automatically and do NOT support $expand (returns 400).
             if expand:
-                query_params["$expand"] = expand
+                if entity_type == "CalculatedAssignments":
+                    query_params["$expand"] = expand
+                else:
+                    logger.warning(
+                        f"$expand is not supported for DataObjects/{entity_type} endpoint "
+                        f"(requested: {expand}). Ignoring $expand parameter. "
+                        f"Reference fields are returned as inline nested objects automatically."
+                    )
             if include_count:
                 query_params["$count"] = "true"
 
@@ -841,6 +881,16 @@ async def query_omada_identity(
         - LASTNAME (not "lastname" or "last_name")
         - DISPLAYNAME, EMPLOYEEID, DEPARTMENT, STATUS
 
+    IMPORTANT - OData Limitations:
+        1. $expand is NOT supported. Reference fields (JOBTITLE_REF, MANAGER_REF, etc.)
+           are returned as inline nested objects automatically.
+        2. $select with reference fields (JOBTITLE_REF, MANAGER_REF, COMPANY_REF,
+           DEPARTMENT_REF) returns EMPTY objects. Only use $select with scalar fields
+           (EMAIL, FIRSTNAME, LASTNAME, etc.). To get reference data, omit $select.
+        3. any()/all() lambda filters are NOT supported on collection fields.
+           Filters like MANAGER/any(m: m eq 'xxx') return 500 Internal Server Error.
+           Retrieve all records and filter client-side instead.
+
     Args:
         field_filters: List of field filters:
                       [{"field": "EMAIL", "value": "user@domain.com", "operator": "eq"},
@@ -850,7 +900,9 @@ async def query_omada_identity(
         count_only: If True, returns only the count
         top: Maximum number of records to return
         skip: Number of records to skip
-        select_fields: Comma-separated list of fields to select
+        select_fields: Comma-separated list of fields to select. WARNING: Only use with
+                      scalar fields (EMAIL, FIRSTNAME, etc.). Reference fields in $select
+                      return empty objects. Omit to get all fields including references.
         order_by: Field(s) to order by
         include_count: Include total count in response
         bearer_token: Optional bearer token to use instead of acquiring a new one
@@ -915,6 +967,18 @@ async def query_omada_resources(
     - System-level resource inventory
     - Resource type analysis
 
+    IMPORTANT - OData Limitations:
+        1. $expand is NOT supported. Reference fields (SYSTEMREF, ROLETYPEREF, etc.)
+           are returned as inline nested objects automatically.
+        2. $select with reference fields (SYSTEMREF, ROLETYPEREF, ROLECATEGORY,
+           ROLEFOLDER, OWNERREF, CHILDROLES, etc.) returns EMPTY objects.
+           Only use $select with scalar fields (NAME, DESCRIPTION, ROLEID, etc.).
+           To get reference data, omit $select.
+        3. any()/all() lambda filters are NOT supported on collection fields.
+           Filters like OWNERREF/any(o: o/Id eq 123), CHILDROLES/any(),
+           MANUALOWNER/any(o: o/Id eq 123) return 500 Internal Server Error.
+           Retrieve all records and filter client-side instead.
+
     Query Omada Resource entities (wrapper for query_omada_entity).
 
     Args:
@@ -925,7 +989,9 @@ async def query_omada_resources(
         count_only: If True, returns only the count
         top: Maximum number of records to return
         skip: Number of records to skip
-        select_fields: Comma-separated list of fields to select
+        select_fields: Comma-separated list of fields to select. WARNING: Only use with
+                      scalar fields (NAME, DESCRIPTION, ROLEID, etc.). Reference fields
+                      in $select return empty objects. Omit to get all fields.
         order_by: Field(s) to order by
         include_count: Include total count in response
         bearer_token: Optional bearer token to use instead of acquiring a new one
@@ -962,6 +1028,116 @@ async def query_omada_resources(
 
 @with_function_logging
 @mcp.tool()
+async def query_omada_orgunits(
+    field_filters: list = None,
+    filter_condition: str = None,
+    count_only: bool = False,
+    summary_mode: bool = True,
+    top: int = None,
+    skip: int = None,
+    select_fields: str = None,
+    order_by: str = None,
+    include_count: bool = False,
+    bearer_token: str = None,
+) -> str:
+    """
+    Query Omada OrgUnit (Organizational Unit) entities using OData API.
+
+    Use this to look up organizational units such as departments, divisions, teams,
+    or any hierarchical organizational structure defined in Omada.
+
+    IMPORTANT - OData Limitations for OrgUnit:
+        1. $expand is NOT supported. Reference fields (OUTYPE, PARENTOU, MANAGER, etc.)
+           are returned as inline nested objects automatically — no $expand needed.
+        2. $select with reference fields (MANAGER, EXPLICITOWNER, OUTYPE, PARENTOU, etc.)
+           returns EMPTY objects. Do NOT use $select with reference/collection fields.
+           Only use $select with scalar fields like: NAME, OUID, C_ADOU, ODWBUSIKEY.
+           To get reference field data, omit $select entirely (or use summary_mode=True
+           which returns key fields without using $select).
+        3. any()/all() lambda filters are NOT supported on collection fields.
+           Filters like MANAGER/any(), EXPLICITOWNER/any(o: o/Id eq 123) return
+           500 Internal Server Error. Retrieve all records and filter client-side instead.
+
+    IMPORTANT - Key OrgUnit Field Names (use EXACTLY as shown - all UPPERCASE):
+        Scalar Fields (safe to use with $select):
+        - OUID (the OrgUnit's unique business identifier, e.g., "ORGANIZATION")
+        - NAME (display name of the OrgUnit, e.g., "Organization")
+        - ODWBUSIKEY (data warehouse business key)
+        - C_ADOU (Active Directory OU path)
+
+        Reference Fields (returned inline - do NOT use with $select):
+        - OUTYPE (OrgUnit type - e.g., "Organization", "Department", "Team")
+        - PARENTOU (parent OrgUnit in the hierarchy)
+        - MANAGER (manager(s) of this OrgUnit)
+        - EXPLICITOWNER (explicit owner(s) of this OrgUnit)
+        - ROLESREF (roles associated with this OrgUnit)
+        - CONTEXTSTATUS (context status of the OrgUnit)
+
+        Other Fields:
+        - UId (32-character GUID)
+        - Id (integer database ID)
+        - DisplayName (formatted display name, e.g., "Organization [ORGANIZATION]")
+        - Deleted (boolean indicating if the OrgUnit has been deleted)
+        - CLT_TAGS (tags associated with the OrgUnit)
+        - SERVICEDESKAGENTS (service desk agents for the OrgUnit)
+        - EXPLICITSERVICEDESKAGENTS (explicit service desk agents)
+
+    Example: Query an OrgUnit by name (returns all fields including references):
+        field_filters=[{"field": "NAME", "value": "Organization", "operator": "eq"}]
+
+    Example: Get all OrgUnits with summary (includes OUTYPE, PARENTOU, MANAGER inline):
+        query_omada_orgunits(top=100, summary_mode=True)
+
+    Example: Get full OrgUnit records with all fields:
+        query_omada_orgunits(top=100, summary_mode=False)
+
+    Args:
+        field_filters: List of field filters:
+                      [{"field": "NAME", "value": "Finance", "operator": "eq"},
+                       {"field": "OUID", "value": "FIN", "operator": "eq"}]
+        filter_condition: Custom OData filter condition
+        count_only: If True, returns only the count of matching records
+        summary_mode: If True (default), returns key fields: NAME, OUID, OUTYPE, PARENTOU,
+                     MANAGER, EXPLICITOWNER, C_ADOU. If False, returns all fields.
+        top: Maximum number of records to return
+        skip: Number of records to skip
+        select_fields: Comma-separated list of fields to select. WARNING: Only use with
+                      scalar fields (NAME, OUID, C_ADOU). Using $select with reference
+                      fields (MANAGER, OUTYPE, PARENTOU, etc.) returns empty objects.
+                      Omit this to get reference field data.
+        order_by: Field(s) to order by
+        include_count: Include total count in response
+        bearer_token: Optional bearer token to use instead of acquiring a new one
+
+    Returns:
+        JSON response with OrgUnit data or error message
+
+    Schema Reference:
+        For complete OrgUnit field definitions: schema://omada/orgunit
+    """
+    # Build filters dictionary for clean API
+    filters = {}
+    if field_filters:
+        filters["field_filters"] = field_filters
+    if filter_condition:
+        filters["custom_filter"] = filter_condition
+
+    return await query_omada_entity(
+        entity_type="Orgunit",
+        filters=filters if filters else None,
+        count_only=count_only,
+        summary_mode=summary_mode,
+        top=top,
+        skip=skip,
+        select_fields=select_fields,
+        order_by=order_by,
+        include_count=include_count,
+        bearer_token=bearer_token,
+    )
+
+
+@with_function_logging
+@mcp.tool()
 async def query_omada_entities(
     entity_type: str = "Identity",
     field_filters: list = None,
@@ -971,15 +1147,23 @@ async def query_omada_entities(
     skip: int = None,
     select_fields: str = None,
     order_by: str = None,
-    expand: str = None,
     include_count: bool = False,
     bearer_token: str = None,
 ) -> str:
     """
     Modern generic query function for Omada entities using field filters.
 
+    IMPORTANT - OData Limitations:
+        1. $expand is NOT supported on DataObjects endpoints (Identity, Resource, Orgunit, etc.).
+           Reference fields are returned as inline nested objects automatically — no $expand needed.
+           $expand only works on BuiltIn/CalculatedAssignments (use query_calculated_assignments instead).
+        2. $select with reference/collection fields returns EMPTY objects. Only use $select with
+           scalar fields. Omit $select entirely to get reference field data.
+        3. any()/all() lambda filters are NOT supported on collection fields (returns 500 error).
+           Retrieve all records and filter client-side instead.
+
     Args:
-        entity_type: Type of entity to query (Identity, Resource, System, etc)
+        entity_type: Type of entity to query (Identity, Resource, Orgunit, System, etc)
         field_filters: List of field filters:
                       [{"field": "FIRSTNAME", "value": "Emma", "operator": "eq"},
                        {"field": "LASTNAME", "value": "Taylor", "operator": "startswith"}]
@@ -987,9 +1171,9 @@ async def query_omada_entities(
         count_only: If True, returns only the count
         top: Maximum number of records to return
         skip: Number of records to skip
-        select_fields: Comma-separated list of fields to select
+        select_fields: Comma-separated list of fields to select. WARNING: Only use with
+                      scalar fields. Reference fields in $select return empty objects.
         order_by: Field(s) to order by
-        expand: Comma-separated list of related entities to expand
         include_count: Include total count in response
         bearer_token: Optional bearer token to use instead of acquiring a new one
 
@@ -1011,7 +1195,6 @@ async def query_omada_entities(
         skip=skip,
         select_fields=select_fields,
         order_by=order_by,
-        expand=expand,
         include_count=include_count,
         bearer_token=bearer_token,
     )
@@ -1033,10 +1216,16 @@ async def query_calculated_assignments(
     """
     Query Omada CalculatedAssignments entities (wrapper for query_omada_entity).
 
+    NOTE: This is the ONLY Omada OData endpoint that supports $expand.
+    Valid $expand values: Identity, Resource, ResourceType (can be combined with commas).
+    Do NOT use $expand with $select that includes fields not on the base entity (e.g.,
+    ComplianceStatus, AssignmentReasons) as this causes 400 errors.
+
     Args:
         identity_id: Numeric ID for identity to get assignments for (e.g., 1006500)
         select_fields: Fields to select (default: "AssignmentKey,AccountName")
-        expand: Related entities to expand (default: "Identity,Resource,ResourceType")
+        expand: Related entities to expand (default: "Identity,Resource,ResourceType").
+                ONLY valid values: Identity, Resource, ResourceType.
         filter_condition: Custom OData filter condition
         top: Maximum number of records to return
         skip: Number of records to skip
@@ -1802,64 +1991,170 @@ async def _execute_graphql_request(
 async def get_access_requests(
     impersonate_user: str,
     bearer_token: str,
-    filter_field: str = None,
-    filter_value: str = None,
+    access_reference_key: str = None,
+    access_reference_key_operator: str = "CONTAINS",
+    beneficiary: str = None,
+    beneficiary_operator: str = "CONTAINS",
+    resource: str = None,
+    resource_operator: str = "CONTAINS",
+    requested_by: str = None,
+    requested_by_operator: str = "CONTAINS",
+    reason: str = None,
+    reason_operator: str = "CONTAINS",
+    search_string: str = None,
+    search_string_operator: str = "CONTAINS",
+    system: str = None,
+    system_operator: str = "CONTAINS",
+    valid_from: str = None,
+    valid_from_operator: str = "LESS_THAN",
+    valid_to: str = None,
+    valid_to_operator: str = "LESS_THAN",
+    requested_time: str = None,
+    requested_time_operator: str = "LESS_THAN",
     summary_mode: bool = True,
     use_cache: bool = True,
 ) -> str:
-    """Get access requests from Omada GraphQL API using user impersonation.
+    """Get access requests from Omada GraphQL API using user impersonation (requires Graph API v3.2+).
+
+    All filters are optional and can be combined. Text filters support CONTAINS or EQUALS operators.
+    Date filters support LESS_THAN or GREATER_THAN operators.
 
     Args:
         impersonate_user: Email address of the user to impersonate (e.g., user@domain.com)
-        filter_field: Optional filter field name (e.g., "beneficiaryId", "identityId", "status")
-        filter_value: Optional filter value
-        summary_mode: If True (default), returns only key fields (id, beneficiary, resource, status)
-                     If False, returns all fields
-        bearer_token: Optional bearer token to use instead of acquiring a new one
+        bearer_token: Bearer token for authentication
+        access_reference_key: Filter by access reference key (not required for IS_EMPTY/IS_NOT_EMPTY)
+        access_reference_key_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        beneficiary: Filter by beneficiary name (not required for IS_EMPTY/IS_NOT_EMPTY)
+        beneficiary_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        resource: Filter by resource name (not required for IS_EMPTY/IS_NOT_EMPTY)
+        resource_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        requested_by: Filter by who requested (not required for IS_EMPTY/IS_NOT_EMPTY)
+        requested_by_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        reason: Filter by reason text (not required for IS_EMPTY/IS_NOT_EMPTY)
+        reason_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        search_string: General search string across access requests (not required for IS_EMPTY/IS_NOT_EMPTY)
+        search_string_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        system: Filter by system name (not required for IS_EMPTY/IS_NOT_EMPTY)
+        system_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        valid_from: Filter by valid from date (ISO format, e.g. "2024-01-01")
+        valid_from_operator: Operator for valid_from filter (LESS_THAN or GREATER_THAN, default: LESS_THAN)
+        valid_to: Filter by valid to date (ISO format, e.g. "2024-12-31")
+        valid_to_operator: Operator for valid_to filter (LESS_THAN or GREATER_THAN, default: LESS_THAN)
+        requested_time: Filter by requested time (ISO format)
+        requested_time_operator: Operator for requested_time filter (LESS_THAN or GREATER_THAN, default: LESS_THAN)
+        summary_mode: If True (default), returns only key fields. If False, returns all fields.
         use_cache: Whether to use cache for this request (default: True)
 
     Returns:
         JSON string containing access requests data
     """
     try:
-        logger.debug(
-            f"Getting access requests for user: {impersonate_user}, filter: {filter_field}={filter_value if filter_field else 'none'}"
-        )
+        # Build individual filter entries
+        filter_parts = []
+        active_filters = {}
 
-        # Build filter clause conditionally
-        filter_clause = (
-            f"(filters: {{{filter_field}: {json.dumps(filter_value)}}})"
-            if filter_field and filter_value
-            else ""
+        # Text filters (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY)
+        text_filters = {
+            "accessReferenceKey": (access_reference_key, access_reference_key_operator),
+            "beneficiary": (beneficiary, beneficiary_operator),
+            "resource": (resource, resource_operator),
+            "requestedBy": (requested_by, requested_by_operator),
+            "system": (system, system_operator),
+            "searchString": (search_string, search_string_operator),
+            "reason": (reason, reason_operator),
+        }
+        for field_name, (value, operator) in text_filters.items():
+            if operator in ("IS_EMPTY", "IS_NOT_EMPTY"):
+                filter_parts.append(
+                    f'{field_name}: {{operator: {operator}}}'
+                )
+                active_filters[field_name] = operator
+            elif value is not None:
+                filter_parts.append(
+                    f'{field_name}: {{filterValue: {json.dumps(value)}, operator: {operator}}}'
+                )
+                active_filters[field_name] = f"{operator} {value}"
+
+        # Date-based filters (LESS_THAN or GREATER_THAN)
+        date_filters = {
+            "validFrom": (valid_from, valid_from_operator),
+            "validTo": (valid_to, valid_to_operator),
+            "requestedTime": (requested_time, requested_time_operator),
+        }
+        for field_name, (value, operator) in date_filters.items():
+            if value is not None:
+                filter_parts.append(
+                    f'{field_name}: {{filterValue: {json.dumps(value)}, operator: {operator}}}'
+                )
+                active_filters[field_name] = f"{operator} {value}"
+
+        # Build the full filter clause
+        filter_clause = ""
+        if filter_parts:
+            filter_clause = f"(filters: {{{', '.join(filter_parts)}}})"
+
+        logger.debug(
+            f"Getting access requests for user: {impersonate_user}, filters: {active_filters if active_filters else 'none'}"
         )
 
         # Build GraphQL query with optional filter
         query = f"""query GetAccessRequests {{
   accessRequests{filter_clause} {{
+    pages
     total
     data {{
       id
-      beneficiary {{
-        id
-        identityId
-        displayName
-        contexts {{
-          id
-        }}
+      validFrom
+      validTo
+      effectiveValidFrom
+      effectiveValidTo
+      reason
+      accessReferenceKey
+      resourceAssignmentId
+      status {{
+        accessApprovalStatusEnum
+        approvalStatus
+        provisioningStatus
+        provisioningStatusText
+        requestAssignmentState
+        violationStatus
+        violationStatusText
       }}
       resource {{
         name
+        id
+        description
+        resourceType {{
+          name
+          id
+        }}
+        childResourceIds
       }}
-      status {{
-        approvalStatus
+      requestedBy {{
+        lastName
+        id
+        firstName
+        displayName
+        userName
+      }}
+      beneficiary {{
+        id
+        identityId
+        firstName
+        lastName
+        displayName
+      }}
+      childAssignments {{
+        id
       }}
     }}
   }}
 }}"""
 
-        # Execute GraphQL request WITH CACHING
+        # Execute GraphQL request WITH CACHING (requires Graph API v3.2+)
         result = await _execute_graphql_request_cached(
-            query, impersonate_user, bearer_token=bearer_token, use_cache=use_cache
+            query, impersonate_user, bearer_token=bearer_token, use_cache=use_cache,
+            graphql_version="3.2",
         )
 
         if result["success"]:
@@ -1868,6 +2163,7 @@ async def get_access_requests(
             if "data" in data and "accessRequests" in data["data"]:
                 access_requests_obj = data["data"]["accessRequests"]
                 total = access_requests_obj.get("total", 0)
+                pages = access_requests_obj.get("pages", 0)
                 access_requests = access_requests_obj.get("data", [])
 
                 # Apply summarization if requested
@@ -1882,10 +2178,9 @@ async def get_access_requests(
                     endpoint=result["endpoint"],
                     impersonated_user=impersonate_user,
                     total_requests=total,
+                    total_pages=pages,
                     requests_returned=len(response_data),
-                    filter_applied=(
-                        f"{filter_field}={filter_value}" if filter_field else "none"
-                    ),
+                    filters_applied=active_filters if active_filters else "none",
                     summary_mode=summary_mode,
                 )
             else:
@@ -1909,6 +2204,274 @@ async def get_access_requests(
             error_type=type(e).__name__,
             message=f"Error getting access requests: {str(e)}",
             impersonated_user=impersonate_user,
+        )
+
+
+@with_function_logging
+@mcp.tool()
+async def get_access_requests_by_ids(
+    impersonate_user: str,
+    bearer_token: str,
+    ids: str,
+    use_cache: bool = True,
+) -> str:
+    """
+    Look up one or more access requests by their ID(s) from Omada GraphQL API (requires Graph API v3.2+).
+
+    Returns the full detail of specific access request(s) including status, resource, beneficiary,
+    requester, child assignments, and violation information. Use this when you already have an
+    access request ID and need the complete picture for that request.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+        ids: The access request ID (GUID) to look up. This is the "id" field from get_access_requests results.
+             Example: "c13713f1-cc1a-46fd-9195-93953c248696"
+             PROMPT: "Please provide the access request ID (GUID)"
+
+    Optional parameters:
+        use_cache: Whether to use cache for this request (default: True)
+
+    LLM INSTRUCTIONS - RESPONSE FIELD GUIDE:
+        Top-level fields:
+        - id: The access request GUID (matches the input)
+        - validFrom / validTo: Requested validity period. validTo of "9999-12-31T00:00:00" means permanent/no expiry
+        - effectiveValidFrom / effectiveValidTo: Actual effective dates (may differ due to timezone adjustments)
+        - resourceAssignmentId: GUID linking to the underlying resource assignment
+        - requestedTime: ISO 8601 timestamp of when the request was submitted
+        - reason: The justification text provided by the requester
+        - accessReferenceKey: Short reference code (e.g., "8UI9B4"). May be empty string.
+
+        status object:
+        - approvalStatus: Human-readable status (e.g., "Pending approval by Robert Scott")
+        - accessApprovalStatusEnum: Enum status (e.g., "pending", "approved", "rejected")
+        - requestAssignmentState: State of the assignment (e.g., "pending", "active")
+        - provisioningStatus / provisioningStatusText: Provisioning state (e.g., "notSet" when not yet provisioned)
+        - violationStatus / violationStatusText: Violation state (e.g., "NO_VIOLATION")
+
+        resource object:
+        - name: Resource name (e.g., "Archive Documents")
+        - description: What the resource provides (e.g., "Provides the user with the ability to Archive documents")
+        - system.name: Target system (e.g., "Document Management")
+        - riskLevel.name: Risk classification (e.g., "Low")
+        - resourceType.name: Type of resource (e.g., "Application Role")
+        - resourceCategory.name: Category (e.g., "Role")
+        - resourceFolder.name: Organizational folder grouping
+        - maxValidity: Maximum validity in days (0 means unlimited)
+        - accountTypes[].name: Account types (e.g., "Personal")
+        - childResourceIds: GUIDs of child resources that are part of this resource
+
+        requestedBy object:
+        - displayName: Full name of who submitted the request (e.g., "Hanna Ulrich")
+        - userName: Login username (e.g., "HANULR@54MV4C.ONMICROSOFT.COM")
+
+        beneficiary object:
+        - displayName: Full name of who the access is for
+        - identityId: Short identity ID (e.g., "HANULR")
+        - accounts[]: List of the beneficiary's accounts across systems, each with accountName and system.name
+
+        childAssignments array:
+        - These are child resource assignments created as a result of the parent request
+        - Each has its own resource, identity, validity period, and compliance/violation info
+        - violations[]: Array of violation objects with violationStatus and description
+          (e.g., "DECISION_PENDING_NOT_ALLOWED" / "Copied from parent because it has been disabled")
+        - reason[]: Array explaining why the child was created (reasonType "ChildResource" means
+          it was auto-created from a parent resource's childResourceIds)
+        - complianceStatus: Compliance state (e.g., "None")
+        - disabled: Whether the child assignment is disabled (true/false)
+
+    LLM INSTRUCTIONS - DISPLAY TO USER:
+        When presenting access request details to the user, show:
+        1. Resource Name (resource.name) and Description (resource.description)
+        2. System Name (resource.system.name)
+        3. Approval Status (status.approvalStatus) - the human-readable status
+        4. Beneficiary (beneficiary.displayName)
+        5. Requested By (requestedBy.displayName) and When (requestedTime)
+        6. Reason (reason)
+        7. Valid From/To (validFrom / validTo)
+        8. Risk Level (resource.riskLevel.name)
+        9. Child Assignments - if any exist, summarize their resource names, violation status, and disabled state
+
+    LLM INSTRUCTIONS - TECHNICAL IDs (DO NOT DISPLAY, STORE INTERNALLY):
+        Do NOT display these to the user, but store them for downstream operations:
+        - id, resourceAssignmentId
+        - All nested .id fields (resource.id, system.id, requestedBy.id, beneficiary.id, etc.)
+        - childAssignments[].id, childAssignments[].reason[].causeObjectKey
+
+    Returns:
+        JSON response with full access request details, or error message if the request fails
+    """
+    # ENTRY LOGGING
+    logger.debug(
+        f"DEBUG: ENTRY - get_access_requests_by_ids(impersonate_user={impersonate_user}, ids={ids})"
+    )
+
+    try:
+        # Validate mandatory fields using helper
+        error = validate_required_fields(
+            impersonate_user=impersonate_user,
+            ids=ids,
+        )
+        if error:
+            return error
+
+        # Build GraphQL query
+        query = f"""query accessRequestsByIds {{
+  accessRequestsByIds(ids: {json.dumps(ids)}) {{
+    id
+    validTo
+    validFrom
+    resourceAssignmentId
+    status {{
+      violationStatusText
+      violationStatus
+      requestAssignmentState
+      provisioningStatusText
+      provisioningStatus
+      approvalStatus
+      accessApprovalStatusEnum
+    }}
+    resource {{
+      system {{
+        name
+        id
+      }}
+      riskLevel {{
+        name
+      }}
+      resourceFolder {{
+        name
+        id
+      }}
+      resourceType {{
+        name
+        id
+      }}
+      resourceCategory {{
+        name
+        id
+      }}
+      name
+      maxValidity
+      id
+      description
+      childResourceIds
+      accountTypes {{
+        id
+        name
+      }}
+    }}
+    requestedTime
+    requestedBy {{
+      displayName
+      firstName
+      id
+      lastName
+      userName
+    }}
+    reason
+    effectiveValidTo
+    effectiveValidFrom
+    childAssignments {{
+      violations {{
+        violationStatus
+        description
+      }}
+      validTo
+      validFrom
+      resource {{
+        id
+        name
+        system {{
+          name
+          id
+        }}
+      }}
+      reason {{
+        causeObjectKey
+        description
+        reasonType
+      }}
+      id
+      identity {{
+        createTime
+        id
+        identityId
+        lastName
+        displayName
+        firstName
+      }}
+      complianceStatus
+      disabled
+    }}
+    beneficiary {{
+      lastName
+      identityId
+      id
+      firstName
+      displayName
+      accounts {{
+        id
+        system {{
+          id
+          name
+        }}
+        accountName
+      }}
+    }}
+    accessReferenceKey
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.2 and caching support
+        result = await _execute_graphql_request_cached(
+            query,
+            impersonate_user,
+            graphql_version="3.2",
+            bearer_token=bearer_token,
+            use_cache=use_cache,
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract access requests from the GraphQL response
+            if "data" in data and "accessRequestsByIds" in data["data"]:
+                access_requests = data["data"]["accessRequestsByIds"]
+
+                return build_success_response(
+                    data={"access_requests": access_requests},
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    ids=ids,
+                    requests_returned=len(access_requests) if isinstance(access_requests, list) else 1,
+                )
+            else:
+                return build_error_response(
+                    error_type="NoDataFound",
+                    message="No access request found for the provided ID(s)",
+                    impersonated_user=impersonate_user,
+                    ids=ids,
+                    response=data,
+                )
+        else:
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+                ids=ids,
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+            ids=ids if "ids" in locals() else "N/A",
         )
 
 
@@ -2581,9 +3144,9 @@ async def get_identities_for_beneficiary(
 @with_function_logging
 @mcp.tool()
 async def get_calculated_assignments_detailed(
-    identity_ids: str,
     impersonate_user: str,
     bearer_token: str,
+    identity_ids: str = None,
     resource_type_name: str = None,
     resource_type_operator: str = "CONTAINS",
     compliance_status: str = None,
@@ -2594,13 +3157,45 @@ async def get_calculated_assignments_detailed(
     system_name_operator: str = "CONTAINS",
     identity_name: str = None,
     identity_name_operator: str = "CONTAINS",
+    resource_name: str = None,
+    resource_name_operator: str = "CONTAINS",
+    violations: str = None,
+    violations_operator: str = "CONTAINS",
+    valid_from: str = None,
+    valid_from_operator: str = "LESS_THAN",
+    valid_to: str = None,
+    valid_to_operator: str = "LESS_THAN",
+    category: str = None,
+    category_operator: str = "EQUALS",
+    disabled: bool = None,
+    is_application_accounts_system_visible: bool = None,
+    reason_type: str = None,
+    resource_ids: str = None,
+    system_id: str = None,
     sort_by: str = "RESOURCE_NAME",
     page: int = 1,
     rows: int = 50,
     use_cache: bool = True,
 ) -> str:
     """
-    Get detailed calculated assignments with compliance and violation status using Omada GraphQL API.
+    Get detailed calculated assignments with compliance and violation status using Omada GraphQL API (requires Graph API v3.2+).
+
+    At least one filter must be specified for the query to work.
+
+    *** CRITICAL RULE - NEVER USE identityName WITH IS_EMPTY ***
+    When the user does NOT mention a specific identity or person, DO NOT pass the identityName
+    parameter at all. Leave it out entirely. NEVER set identity_name_operator to "IS_EMPTY".
+    IS_EMPTY does NOT mean "all identities" — it searches for records with broken/missing identity
+    data, which returns wrong results. Simply omit identity_name and identity_name_operator.
+
+    This rule applies to ALL prompts including "orphan accounts", "unlinked accounts",
+    "unassigned accounts", "accounts with no owner". For orphan account queries, use the
+    get_compliance_workbench_data tool instead — it returns per-system orphan account counts
+    directly via the complianceStatus.orphaned field.
+
+    CORRECT for "show orphan accounts":   Use get_compliance_workbench_data tool
+    WRONG for "show orphan accounts":     This tool with identityName IS_EMPTY
+    *** END CRITICAL RULE ***
 
     IMPORTANT LLM INSTRUCTIONS - When to Use This Tool:
         USE THIS TOOL (GraphQL) when the user asks for assignments with ANY of these patterns:
@@ -2632,8 +3227,8 @@ async def get_calculated_assignments_detailed(
         - "Get assignments using account JohnDoe"
         - "What does account ROBWOL have access to?"
 
-    IMPORTANT: This function requires 3 mandatory parameters. If any are missing,
-    you MUST prompt the user to provide them before calling this function.
+    IMPORTANT: At least one filter parameter must be provided. If the user wants to filter
+    by identity, prompt for the identity UId.
 
     CRITICAL - Identity ID Field Name:
         WRONG: Do NOT use the "IdentityID" field (e.g., "ROBWOL") - this is a user-readable identifier
@@ -2652,47 +3247,52 @@ async def get_calculated_assignments_detailed(
         - DO NOT use IdentityID: "ROBWOL" (this will fail!)
 
     REQUIRED PARAMETERS (prompt user if missing):
-        identity_ids: One or more identity UIds (32-character GUIDs from the "UId" field, NOT the "Id" or "IdentityID" fields!)
-                     Can be a single UId or multiple UIds separated by commas
-                     Example: "2c68e1df-1335-4e8c-8ef9-eff1d2005629" (CORRECT - single UId from UId field)
-                     Example: "2c68e1df-1335-4e8c-8ef9-eff1d2005629,a3b7f2e8-2446-5f9d-9fa0-f0e2d3116730" (CORRECT - multiple UIds)
-                     NOT: 1006715 (WRONG - this is the Id field)
-                     NOT: "ROBWOL" (WRONG - this is the IdentityID field)
-                     PROMPT: "Please provide one or more identity UIds (32-character GUIDs from the UId field, comma-separated)"
         impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
                          PROMPT: "Please provide the email address to impersonate"
         bearer_token: OAuth2 bearer token for authentication (required for API access)
                      PROMPT: "Please provide a valid bearer token"
 
-    Optional parameters:
+    Optional filter parameters (at least one must be specified):
+        identity_ids: One or more identity UIds (32-character GUIDs from the "UId" field)
+                     Can be a single UId or multiple UIds separated by commas
+                     Example: "2c68e1df-1335-4e8c-8ef9-eff1d2005629"
         resource_type_name: Filter by resource type name (e.g., "Active Directory - Security Group")
-        resource_type_operator: Operator for resource_type_name filter (default: "CONTAINS")
-                               Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        resource_type_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
         compliance_status: Filter by compliance status (e.g., "NOT APPROVED", "APPROVED")
-        compliance_status_operator: Operator for compliance_status filter (default: "CONTAINS")
-                                   Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        compliance_status_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
         account_name: Filter by account name (e.g., "HANULR")
-        account_name_operator: Operator for account_name filter (default: "CONTAINS")
-                              Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        account_name_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
         system_name: Filter by system name (e.g., "AD")
-        system_name_operator: Operator for system_name filter (default: "CONTAINS")
-                             Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        system_name_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
         identity_name: Filter by identity name (e.g., "ROBERT WOLF")
-        identity_name_operator: Operator for identity_name filter (default: "CONTAINS")
-                               Valid values: "CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"
+        identity_name_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        resource_name: Filter by resource name (e.g., "VPN Access")
+        resource_name_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        violations: Filter by violation text
+        violations_operator: Operator (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY; default: CONTAINS)
+        valid_from: Filter by valid from date (ISO format, e.g. "2024-01-01")
+        valid_from_operator: Operator (LESS_THAN or GREATER_THAN; default: LESS_THAN)
+        valid_to: Filter by valid to date (ISO format, e.g. "2024-12-31")
+        valid_to_operator: Operator (LESS_THAN or GREATER_THAN; default: LESS_THAN)
+        category: Filter by assignment category (e.g., "ACCOUNT_ASSIGNMENTS")
+        category_operator: Operator (EQUALS or CONTAINS; default: EQUALS)
+        disabled: Filter by disabled status (true or false)
+        is_application_accounts_system_visible: Filter by application accounts system visibility (true or false)
+        reason_type: Filter by reason type (e.g., "DIRECT")
+        resource_ids: Filter by resource ID(s) (GUID)
+        system_id: Filter by system ID (GUID)
+
+    Other optional parameters:
         sort_by: Field to sort results by (default: "RESOURCE_NAME")
                 Valid values: "RESOURCE_NAME", "IDENTITY_NAME", "ACCOUNT_NAME", "RESOURCE_TYPE",
                              "COMPLIANCE_STATUS", "SYSTEM_NAME", "VALID_FROM", "VALID_TO",
                              "DISABLED", "VIOLATION_STATUS"
         page: Page number to retrieve (default: 1, minimum: 1)
-             Use with rows parameter to paginate through large result sets
         rows: Number of rows per page (default: 50, minimum: 1, maximum: 1000)
-             Controls page size for pagination
 
     Returns:
         JSON response with detailed assignments including:
         - total: Total number of assignments matching filters
-        - pages: Total number of pages available
         - current_page: The page number returned
         - rows_per_page: Number of rows per page
         - assignments_returned: Number of assignments in current page
@@ -2723,12 +3323,26 @@ async def get_calculated_assignments_detailed(
     try:
         # Validate mandatory fields using helper
         error = validate_required_fields(
-            identity_ids=identity_ids,
             impersonate_user=impersonate_user,
             bearer_token=bearer_token,
         )
         if error:
             return error
+
+        # Validate that at least one filter is specified
+        has_filter = any([
+            identity_ids, resource_type_name, compliance_status, account_name,
+            system_name, identity_name, resource_name, violations, valid_from,
+            valid_to, category, disabled is not None,
+            is_application_accounts_system_visible is not None, reason_type,
+            resource_ids, system_id,
+        ])
+        if not has_filter:
+            return build_error_response(
+                error_type="ValidationError",
+                message="At least one filter parameter must be specified for calculatedAssignments query.",
+                impersonated_user=impersonate_user,
+            )
 
         # Validate pagination parameters
         if page < 1:
@@ -2748,74 +3362,61 @@ async def get_calculated_assignments_detailed(
         # Build the filters object dynamically based on provided parameters
         filters = []
 
-        # Add multipleIdentityIds filter (most efficient filter using GUID)
-        filters.append(f'multipleIdentityIds: "{identity_ids}"')
+        # Identity IDs filter (optional in v3.2)
+        if identity_ids:
+            filters.append(f'multipleIdentityIds: {json.dumps(identity_ids)}')
 
-        # Add optional filters only if provided
-        if resource_type_name and resource_type_name.strip():
-            # Validate operator
-            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
-            if resource_type_operator not in valid_operators:
-                return build_error_response(
-                    error_type="InvalidOperator",
-                    message=f"Invalid resource_type_operator: {resource_type_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user,
+        # Text filters with operators (CONTAINS, EQUALS, IS_EMPTY, IS_NOT_EMPTY)
+        text_filters = {
+            "resourceTypeName": (resource_type_name, resource_type_operator),
+            "complianceStatus": (compliance_status, compliance_status_operator),
+            "accountName": (account_name, account_name_operator),
+            "systemName": (system_name, system_name_operator),
+            "identityName": (identity_name, identity_name_operator),
+            "resourceName": (resource_name, resource_name_operator),
+            "violations": (violations, violations_operator),
+        }
+        for field_name, (value, operator) in text_filters.items():
+            if operator in ("IS_EMPTY", "IS_NOT_EMPTY"):
+                filters.append(f'{field_name}: {{operator: {operator}}}')
+            elif value is not None and str(value).strip():
+                filters.append(
+                    f'{field_name}: {{filterValue: {json.dumps(value)}, operator: {operator}}}'
                 )
+
+        # Date filters (LESS_THAN or GREATER_THAN)
+        date_filters = {
+            "validFrom": (valid_from, valid_from_operator),
+            "validTo": (valid_to, valid_to_operator),
+        }
+        for field_name, (value, operator) in date_filters.items():
+            if value is not None:
+                filters.append(
+                    f'{field_name}: {{filterValue: {json.dumps(value)}, operator: {operator}}}'
+                )
+
+        # Category filter (typically EQUALS)
+        if category is not None:
             filters.append(
-                f'resourceTypeName: {{filterValue: "{resource_type_name}", operator: {resource_type_operator}}}'
+                f'category: {{filterValue: {category}, operator: {category_operator}}}'
             )
 
-        if compliance_status and compliance_status.strip():
-            # Validate operator
-            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
-            if compliance_status_operator not in valid_operators:
-                return build_error_response(
-                    error_type="InvalidOperator",
-                    message=f"Invalid compliance_status_operator: {compliance_status_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user,
-                )
-            filters.append(
-                f'complianceStatus: {{filterValue: "{compliance_status}", operator: {compliance_status_operator}}}'
-            )
+        # Boolean filters
+        if disabled is not None:
+            filters.append(f'disabled: {str(disabled).lower()}')
 
-        if account_name and account_name.strip():
-            # Validate operator
-            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
-            if account_name_operator not in valid_operators:
-                return build_error_response(
-                    error_type="InvalidOperator",
-                    message=f"Invalid account_name_operator: {account_name_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user,
-                )
-            filters.append(
-                f'accountName: {{filterValue: "{account_name}", operator: {account_name_operator}}}'
-            )
+        if is_application_accounts_system_visible is not None:
+            filters.append(f'isApplicationAccountsSystemVisible: {str(is_application_accounts_system_visible).lower()}')
 
-        if system_name and system_name.strip():
-            # Validate operator
-            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
-            if system_name_operator not in valid_operators:
-                return build_error_response(
-                    error_type="InvalidOperator",
-                    message=f"Invalid system_name_operator: {system_name_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user,
-                )
-            filters.append(
-                f'systemName: {{filterValue: "{system_name}", operator: {system_name_operator}}}'
-            )
+        # Simple value filters
+        if reason_type is not None:
+            filters.append(f'reasonType: {reason_type}')
 
-        if identity_name and identity_name.strip():
-            # Validate operator
-            valid_operators = ["CONTAINS", "EQUAL", "IS_EMPTY", "IS_NOT_EMPTY"]
-            if identity_name_operator not in valid_operators:
-                return build_error_response(
-                    error_type="InvalidOperator",
-                    message=f"Invalid identity_name_operator: {identity_name_operator}. Valid values are: {', '.join(valid_operators)}",
-                    impersonated_user=impersonate_user,
-                )
-            filters.append(
-                f'identityName: {{filterValue: "{identity_name}", operator: {identity_name_operator}}}'
-            )
+        if resource_ids is not None:
+            filters.append(f'resourceIds: {json.dumps(resource_ids)}')
+
+        if system_id is not None:
+            filters.append(f'systemId: {json.dumps(system_id)}')
 
         # Join filters
         filters_string = ", ".join(filters)
@@ -2847,60 +3448,80 @@ async def get_calculated_assignments_detailed(
     pagination: {{page: {page}, rows: {rows}}}
     filters: {{{filters_string}}}
   ) {{
-    pages
     total
     data {{
-      complianceStatus
       violations {{
-        description
         violationStatus
+        description
+      }}
+      validTo
+      validFrom
+      resource {{
+        system {{
+          name
+          id
+        }}
+        riskLevel {{
+          name
+        }}
+        resourceType {{
+          id
+        }}
+        resourceFolder {{
+          name
+          id
+        }}
+        resourceCategory {{
+          name
+        }}
+        maxValidity
+        id
+        name
+        description
+        childResourceIds
+        accountTypes {{
+          id
+          name
+        }}
       }}
       reason {{
-        reasonType
         description
         causeObjectKey
-      }}
-      validFrom
-      validTo
-      resource {{
-        name
-        id
-        description
-        resourceFolder {{
-          id
-        }}
+        reasonType
       }}
       identity {{
-        firstName
         lastName
-        displayName
         id
+        firstName
+        displayName
         identityId
       }}
+      id
       disabled
+      complianceStatus
       account {{
-          accountName
+        accountName
+        id
+        accountType {{
           id
-          system {{
-            name
-            id
-          }}
-          accountType {{
-            name
-            id
-          }}
+          name
         }}
+        system {{
+          id
+          name
+        }}
+      }}
     }}
   }}
 }}"""
 
         logger.debug(f"GraphQL query: {query}")
 
-        # Execute GraphQL request with version 2.19 WITH CACHING
+        # Execute GraphQL request with version 3.2 WITH CACHING
         result = await _execute_graphql_request_cached(
             query,
             impersonate_user,
-            graphql_version="2.19",
+            graphql_version="3.2",
             bearer_token=bearer_token,
             use_cache=use_cache,
         )
@@ -2912,21 +3533,15 @@ async def get_calculated_assignments_detailed(
                 calculated_assignments = data["data"]["calculatedAssignments"]
                 assignments_data = calculated_assignments.get("data", [])
                 total = calculated_assignments.get("total", 0)
-                pages = calculated_assignments.get("pages", 0)
 
                 return build_success_response(
                     data=assignments_data,
                     endpoint=result["endpoint"],
-                    identity_ids=identity_ids,
                     impersonated_user=impersonate_user,
-                    resource_type_name=resource_type_name,
-                    compliance_status=compliance_status,
                     total_assignments=total,
-                    pages=pages,
                     current_page=page,
                     rows_per_page=rows,
                     assignments_returned=len(assignments_data),
-                    assignments=assignments_data,
                 )
             else:
                 return build_error_response(
@@ -3264,6 +3879,707 @@ async def get_pending_approvals(
 
 @with_function_logging
 @mcp.tool()
+async def get_access_request_approval_survey_questions(
+    impersonate_user: str,
+    bearer_token: str,
+    account_type: str = None,
+    account_type_operator: str = "CONTAINS",
+    workflow_step: str = None,
+    workflow_step_operator: str = "CONTAINS",
+    valid_to: str = None,
+    valid_to_operator: str = "LESS_THAN",
+    resource: str = None,
+    resource_operator: str = "CONTAINS",
+    request_type: str = None,
+    request_type_operator: str = "EQUALS",
+    identity: str = None,
+    identity_operator: str = "CONTAINS",
+    sort_by: str = None,
+    sort_order: str = "ASCENDING",
+    second_sort_by: str = None,
+    second_sort_order: str = "ASCENDING",
+    summary_mode: bool = True,
+    use_cache: bool = True,
+) -> str:
+    """
+    Get pending approval survey questions from Omada GraphQL API (requires Graph API v3.2+).
+
+    This is the v3.2 version with expanded filters, sorting, and a deeper field set compared
+    to get_pending_approvals. Use this when you need advanced filtering or the full response data.
+
+    IMPORTANT: This function requires 2 mandatory parameters. If missing,
+    you MUST prompt the user to provide them before calling this function.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+
+    Optional filter parameters (all combinable):
+        account_type: Filter by account type
+        account_type_operator: Operator (CONTAINS or EQUALS, default: CONTAINS)
+        workflow_step: Filter by workflow step (e.g., "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
+        workflow_step_operator: Operator (CONTAINS or EQUALS, default: CONTAINS)
+        valid_to: Filter by valid to date (ISO format, e.g. "2024-12-31")
+        valid_to_operator: Operator (LESS_THAN or GREATER_THAN, default: LESS_THAN)
+        resource: Filter by resource name
+        resource_operator: Operator (CONTAINS or EQUALS, default: CONTAINS)
+        request_type: Filter by request type (e.g., "REQUEST_ACCESS")
+        request_type_operator: Operator (EQUALS or CONTAINS, default: EQUALS)
+        identity: Filter by identity name
+        identity_operator: Operator (CONTAINS or EQUALS, default: CONTAINS)
+        sort_by: Primary sort field (e.g., IDENTITY, RESOURCE, WORKFLOW_STEP, VALID_TO, REQUEST_TYPE, ACCOUNT_TYPE)
+        sort_order: Primary sort order (ASCENDING or DESCENDING, default: ASCENDING)
+        second_sort_by: Secondary sort field (same options as sort_by)
+        second_sort_order: Secondary sort order (ASCENDING or DESCENDING, default: ASCENDING)
+        summary_mode: If True (default), returns only key fields. If False, returns all fields.
+        use_cache: Whether to use cache for this request (default: True)
+
+    LLM INSTRUCTIONS - FILTER TO RESPONSE FIELD MAPPING:
+        The filters map to the following response attributes:
+        - account_type  → resourceAssignment.resource.accountTypes[].name (e.g., "Personal")
+        - workflow_step → workflowStepTitle (e.g., "Perform resource owner approval")
+                          Common values: "Perform resource owner approval", "Perform manager approval",
+                          "Perform system owner approval"
+        - valid_to      → validTo (ISO 8601, e.g., "2026-01-08T23:00:00Z")
+                          NOTE: A validTo of "9999-12-30T23:00:00Z" means permanent/no expiry
+        - resource      → resourceAssignment.resource.name (e.g., "VPN Access - Full")
+        - request_type  → requestType.name (display: "Request access", filter uses enum: "REQUEST_ACCESS")
+        - identity      → resourceAssignment.identity.displayName (e.g., "Berry Black") or
+                          resourceAssignment.identity.identityId (e.g., "BERBLA")
+
+    LLM INSTRUCTIONS - DISPLAY TO USER:
+        When presenting pending approvals to the user, you MUST ALWAYS include:
+        1. Resource Name (resourceAssignment.resource.name) - what access is being requested
+        2. System Name (resourceAssignment.resource.system.name) - which target system
+        3. Workflow Step Title (workflowStepTitle) - current approval stage
+        4. Reason/Justification (reason) - why access was requested
+        5. Identity (resourceAssignment.identity.displayName) - who the request is for
+        6. Risk Level (resourceAssignment.resource.riskLevel.name) - risk classification (e.g., "Low")
+        7. Route Time (routeTime) - when the approval task was assigned to the current approver
+
+        Additional context fields to present when relevant:
+        - Resource Category (resourceAssignment.resource.resourceCategory.name) - e.g., "Permission"
+        - Resource Folder (resourceAssignment.resource.resourceFolder.name) - organizational grouping
+        - Account Type (resourceAssignment.resource.accountTypes[].name) - e.g., "Personal"
+        - Valid From/To (resourceAssignment.validFrom / validTo) - access validity period
+        - Access Reference Key (resourceAssignment.accessReferenceKey) - short reference code (e.g., "8UI9B4")
+        - Context (context.displayName) - organizational context for the request
+        - Identity Contexts (resourceAssignment.identity.contexts[]) - identity's org positions
+          (types include: OrgUnit, Company, JOB_TITLES, DIVISION, C_SCREENINGOBJECT)
+
+    LLM INSTRUCTIONS - TECHNICAL IDs (DO NOT DISPLAY, STORE INTERNALLY):
+        The following fields are technical identifiers needed for downstream operations
+        (e.g., make_approval_decision). Do NOT show these to the user, but store them internally:
+        - surveyId: Required for make_approval_decision
+        - surveyObjectKey: Required for make_approval_decision
+        - resourceAssignment.id: Internal assignment GUID
+        - All .id fields on nested objects (system.id, riskLevel.id, resourceType.id, etc.)
+
+    LLM INSTRUCTIONS - HISTORY FIELD:
+        The "history" field contains a human-readable audit trail of the approval workflow.
+        It includes who submitted the request, when, the reason, and who the approval is assigned to.
+        This is useful for understanding the full context of an approval but can be verbose.
+        Only display if the user asks about the history or approval chain.
+
+    Returns:
+        JSON response with pending approval survey questions including resource and system details,
+        or error message if the request fails
+    """
+    # ENTRY LOGGING
+    logger.debug(
+        f"DEBUG: ENTRY - get_access_request_approval_survey_questions(impersonate_user={impersonate_user}, summary_mode={summary_mode})"
+    )
+
+    try:
+        # Validate mandatory fields using helper
+        error = validate_required_fields(impersonate_user=impersonate_user)
+        if error:
+            return error
+
+        # Build individual filter entries
+        filter_parts = []
+        active_filters = {}
+
+        # Text-based filters (CONTAINS or EQUALS)
+        text_filters = {
+            "accountType": (account_type, account_type_operator),
+            "workflowStep": (workflow_step, workflow_step_operator),
+            "resource": (resource, resource_operator),
+            "requestType": (request_type, request_type_operator),
+            "identity": (identity, identity_operator),
+        }
+        for field_name, (value, operator) in text_filters.items():
+            if value is not None:
+                filter_parts.append(
+                    f'{field_name}: {{filterValue: {json.dumps(value)}, operator: {operator}}}'
+                )
+                active_filters[field_name] = f"{operator} {value}"
+
+        # Date-based filters (LESS_THAN or GREATER_THAN)
+        if valid_to is not None:
+            filter_parts.append(
+                f'validTo: {{filterValue: {json.dumps(valid_to)}, operator: {valid_to_operator}}}'
+            )
+            active_filters["validTo"] = f"{valid_to_operator} {valid_to}"
+
+        # Build the full filter clause
+        filter_clause = ""
+        if filter_parts:
+            filter_clause = f"filters: {{{', '.join(filter_parts)}}}"
+
+        # Build sorting clauses
+        sorting_clause = ""
+        if sort_by:
+            sorting_clause = f"sorting: {{sortBy: {sort_by}, sortOrder: {sort_order}}}"
+
+        second_sorting_clause = ""
+        if second_sort_by:
+            second_sorting_clause = f"secondSorting: {{sortBy: {second_sort_by}, sortOrder: {second_sort_order}}}"
+
+        # Combine all arguments
+        query_args_parts = [p for p in [filter_clause, sorting_clause, second_sorting_clause] if p]
+        query_args = ""
+        if query_args_parts:
+            query_args = f"({', '.join(query_args_parts)})"
+
+        logger.debug(
+            f"Getting pending approvals (v2) for user: {impersonate_user}, filters: {active_filters if active_filters else 'none'}"
+        )
+
+        # Build GraphQL query with full v3.2 field set
+        query = f"""query GetAccessRequestApprovalSurveyQuestions {{
+  accessRequestApprovalSurveyQuestions{query_args} {{
+    total
+    pages
+    data {{
+      workflowStepTitle
+      validTo
+      surveyObjectKey
+      surveyId
+      routeTime
+      resourceAssignment {{
+        validTo
+        validFrom
+        resource {{
+          system {{
+            name
+            id
+          }}
+          riskLevel {{
+            name
+            id
+          }}
+          resourceType {{
+            id
+          }}
+          resourceFolder {{
+            name
+          }}
+          resourceCategory {{
+            name
+          }}
+          name
+          maxValidity
+          description
+          createTime
+          childResourceIds
+          accountTypes {{
+            id
+            name
+          }}
+        }}
+        identity {{
+          lastName
+          id
+          firstName
+          identityId
+          displayName
+          contexts {{
+            id
+            displayName
+            type
+            typeId
+            createTime
+          }}
+          accounts {{
+            accountName
+            id
+            system {{
+              id
+              name
+              createTime
+            }}
+          }}
+        }}
+        id
+        attributes {{
+          attributeDisplayValues
+          displayName
+          id
+          systemName
+        }}
+        accountType {{
+          id
+        }}
+        accountName
+        accessReferenceKey
+      }}
+      requestType {{
+        name
+        id
+      }}
+      reason
+      history
+      context {{
+        id
+        type
+        displayName
+      }}
+    }}
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.2 and caching support
+        result = await _execute_graphql_request_cached(
+            query,
+            impersonate_user,
+            graphql_version="3.2",
+            bearer_token=bearer_token,
+            use_cache=use_cache,
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract approval questions from the GraphQL response
+            if (
+                "data" in data
+                and "accessRequestApprovalSurveyQuestions" in data["data"]
+            ):
+                approval_questions = data["data"][
+                    "accessRequestApprovalSurveyQuestions"
+                ]
+                questions_data = approval_questions.get("data", [])
+                total = approval_questions.get("total", 0)
+                pages = approval_questions.get("pages", 0)
+
+                # Apply summarization if requested
+                response_data = questions_data
+                if summary_mode:
+                    logger.debug(
+                        f"Applying summarization to {len(questions_data)} pending approvals"
+                    )
+                    response_data = _summarize_graphql_data(
+                        questions_data, "PendingApproval"
+                    )
+
+                return build_success_response(
+                    data=response_data,
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    filters_applied=active_filters if active_filters else "none",
+                    total_approvals=total,
+                    total_pages=pages,
+                    approvals_returned=len(response_data),
+                    summary_mode=summary_mode,
+                )
+            else:
+                return build_error_response(
+                    error_type="NoApprovalsFound",
+                    message="No pending approvals found in response",
+                    impersonated_user=impersonate_user,
+                    filters_applied=active_filters if active_filters else "none",
+                    response=data,
+                )
+        else:
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+                filters_applied=active_filters if active_filters else "none",
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+        )
+
+
+@with_function_logging
+@mcp.tool()
+async def get_access_request_approval_survey_question_by_id(
+    impersonate_user: str,
+    bearer_token: str,
+    survey_id: str,
+    survey_object_key: str,
+    use_cache: bool = True,
+) -> str:
+    """
+    Look up a single access request approval survey question by its surveyId and surveyObjectKey
+    from Omada GraphQL API (requires Graph API v3.2+).
+
+    Returns the full detail of a specific pending approval including the workflow step,
+    resource assignment details, identity, request type, reason, history, and context.
+    Use this when you have a specific approval's technical IDs and need the complete detail
+    for that single approval.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+        survey_id: The survey ID for the approval (GUID).
+                  This comes from the surveyId field in get_pending_approvals or
+                  GetAccessRequestApprovalSurveyQuestions results.
+                  Example: "31cd9342-84db-4f71-92e1-a5c88aa103a9"
+                  PROMPT: "Please provide the survey ID"
+        survey_object_key: The survey object key for the approval (GUID).
+                          This comes from the surveyObjectKey field in get_pending_approvals or
+                          GetAccessRequestApprovalSurveyQuestions results.
+                          Example: "2EC3860F-8263-4B90-A52A-130C0B9A0CA9"
+                          PROMPT: "Please provide the survey object key"
+
+    Optional parameters:
+        use_cache: Whether to use cache for this request (default: True)
+
+    LLM INSTRUCTIONS - RESPONSE FIELD GUIDE:
+        Workflow fields:
+        - workflowStepTitle: Human-readable step name (e.g., "Perform resource owner approval")
+        - workflowStep: Internal step identifier (e.g., "ResourceOwnerApproval")
+        - validTo: Expiry date for the requested access (ISO 8601)
+        - routeTime: When this approval step was routed/assigned (ISO 8601)
+
+        Technical IDs (returned for reference):
+        - surveyId: The survey ID (matches input)
+        - surveyObjectKey: The survey object key (matches input)
+
+        resourceAssignment object:
+        - accessReferenceKey: Short reference code (e.g., "8UI9B4")
+        - accountName: Account name for the assignment
+        - createTime: When the assignment was created
+        - id: Assignment GUID
+        - validFrom / validTo: Assignment validity period
+        - resource: The resource being requested, including:
+          - name: Resource name (e.g., "VPN Access - Full")
+          - description: What the resource provides
+          - maxValidity: Maximum validity in days (0 = unlimited)
+          - system.name: Target system (e.g., "Active Directory corporate.com")
+          - resourceType.name: Type (e.g., "Application Role")
+          - resourceFolder.name: Organizational folder grouping
+          - resourceCategory.name: Category (e.g., "Permission", "Role")
+        - accountType: Account type (id and name, e.g., "Personal")
+        - identity: The identity the resource is assigned to, including:
+          - displayName, firstName, lastName: Name fields
+          - identityId: Short identity ID (e.g., "BERBLA")
+        - attributes[]: Additional attributes with displayName, attributeDisplayValues, systemName
+
+        requestType object:
+        - name: Type of request (e.g., "Request access")
+        - id: Request type GUID
+
+        Other fields:
+        - reason: Justification text provided by the requester
+        - history: Human-readable audit trail of the approval workflow (who submitted, when,
+          the reason, and who the approval is assigned to). Can be verbose.
+        - context: Organizational context (id, displayName, type)
+
+    LLM INSTRUCTIONS - DISPLAY TO USER:
+        When presenting the approval detail to the user, show:
+        1. Workflow Step (workflowStepTitle) - current approval stage
+        2. Resource Name (resourceAssignment.resource.name) and Description
+        3. System Name (resourceAssignment.resource.system.name)
+        4. Identity (resourceAssignment.identity.displayName) - who it's for
+        5. Reason (reason) - justification
+        6. Request Type (requestType.name)
+        7. Valid From/To (resourceAssignment.validFrom / validTo)
+        8. Route Time (routeTime) - when approval was assigned
+        9. Context (context.displayName) - organizational context
+
+    LLM INSTRUCTIONS - TECHNICAL IDs (DO NOT DISPLAY, STORE INTERNALLY):
+        Do NOT display these to the user, but store them for downstream operations
+        (e.g., make_approval_decision):
+        - surveyId: Required for make_approval_decision
+        - surveyObjectKey: Required for make_approval_decision
+        - resourceAssignment.id
+        - All nested .id fields (resource.id, system.id, identity.id, etc.)
+
+    Returns:
+        JSON response with the full approval survey question detail,
+        or error message if the request fails
+    """
+    # ENTRY LOGGING
+    logger.debug(
+        f"DEBUG: ENTRY - get_access_request_approval_survey_question_by_id(impersonate_user={impersonate_user}, survey_id={survey_id}, survey_object_key={survey_object_key})"
+    )
+
+    try:
+        # Validate mandatory fields using helper
+        error = validate_required_fields(
+            impersonate_user=impersonate_user,
+            survey_id=survey_id,
+            survey_object_key=survey_object_key,
+        )
+        if error:
+            return error
+
+        # Build GraphQL query
+        query = f"""query accessRequestApprovalSurveyQuestionById {{
+  accessRequestApprovalSurveyQuestionById(surveyId: {json.dumps(survey_id)}, surveyObjectKey: {json.dumps(survey_object_key)}) {{
+    workflowStepTitle
+    workflowStep
+    validTo
+    surveyId
+    routeTime
+    resourceAssignment {{
+      accessReferenceKey
+      accountName
+      createTime
+      id
+      validFrom
+      validTo
+      resource {{
+        name
+        maxValidity
+        id
+        description
+        system {{
+          name
+          id
+        }}
+        resourceType {{
+          name
+          id
+        }}
+        resourceFolder {{
+          name
+          id
+        }}
+        resourceCategory {{
+          name
+        }}
+      }}
+      accountType {{
+        id
+        name
+      }}
+      identity {{
+        identityId
+        id
+        firstName
+        displayName
+        lastName
+      }}
+      attributes {{
+        attributeDisplayValues
+        displayName
+        id
+        systemName
+      }}
+    }}
+    surveyObjectKey
+    reason
+    history
+    context {{
+      id
+      displayName
+      type
+    }}
+    requestType {{
+      name
+      id
+    }}
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.2 and caching support
+        result = await _execute_graphql_request_cached(
+            query,
+            impersonate_user,
+            graphql_version="3.2",
+            bearer_token=bearer_token,
+            use_cache=use_cache,
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract the approval detail from the GraphQL response
+            if "data" in data and "accessRequestApprovalSurveyQuestionById" in data["data"]:
+                approval_detail = data["data"]["accessRequestApprovalSurveyQuestionById"]
+
+                return build_success_response(
+                    data={"approval_detail": approval_detail},
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    survey_id=survey_id,
+                    survey_object_key=survey_object_key,
+                )
+            else:
+                return build_error_response(
+                    error_type="NoDataFound",
+                    message="No approval survey question found for the provided surveyId and surveyObjectKey",
+                    impersonated_user=impersonate_user,
+                    survey_id=survey_id,
+                    survey_object_key=survey_object_key,
+                    response=data,
+                )
+        else:
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+                survey_id=survey_id,
+                survey_object_key=survey_object_key,
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+            survey_id=survey_id if "survey_id" in locals() else "N/A",
+            survey_object_key=survey_object_key if "survey_object_key" in locals() else "N/A",
+        )
+
+
+@with_function_logging
+@mcp.tool()
+async def get_access_approval_workflow_steps_question_count(
+    impersonate_user: str,
+    bearer_token: str,
+    workflow_step_name: str = None,
+    use_cache: bool = True,
+) -> str:
+    """
+    Get a count of pending approval questions per workflow step from Omada GraphQL API (requires Graph API v3.2+).
+
+    Returns the number of pending approval questions (questionsCount) for each workflow step.
+    This is useful for getting a quick overview of how many approvals are waiting at each stage
+    of the approval workflow without fetching the full approval details.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+
+    Optional parameters:
+        workflow_step_name: Filter to a specific workflow step name. If omitted, returns counts
+                          for all workflow steps.
+                          Known values: "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval"
+        use_cache: Whether to use cache for this request (default: True)
+
+    LLM INSTRUCTIONS - RESPONSE FIELD GUIDE:
+        Returns an array of workflow step objects, each containing:
+        - workflowStepTitle: Human-readable step name (e.g., "Perform resource owner approval")
+        - workflowStep: Internal step identifier used for filtering in other tools
+          (e.g., "ManagerApproval", "ResourceOwnerApproval", "SystemOwnerApproval")
+        - questionsCount: Number of pending approval questions at this workflow step (integer)
+          A count of 0 means no approvals are waiting at that step.
+
+    LLM INSTRUCTIONS - DISPLAY TO USER:
+        Present the results as a summary table or list showing:
+        1. Workflow Step Title (workflowStepTitle) - the human-readable name
+        2. Pending Count (questionsCount) - how many approvals are waiting
+        Highlight any steps with questionsCount > 0 as these have pending work.
+        Example presentation:
+        - Perform manager approval: 0 pending
+        - Perform resource owner approval: 4 pending
+        - Perform system owner approval: 0 pending
+
+    LLM INSTRUCTIONS - RELATIONSHIP TO OTHER TOOLS:
+        - The workflowStep values (e.g., "ResourceOwnerApproval") can be used as the
+          workflow_step filter in get_pending_approvals to drill into the specific approvals.
+        - This tool is a good starting point before calling get_pending_approvals, as it
+          shows the user where approvals are waiting without fetching all the detail.
+
+    Returns:
+        JSON response with workflow step question counts, or error message if the request fails
+    """
+    # ENTRY LOGGING
+    logger.debug(
+        f"DEBUG: ENTRY - get_access_approval_workflow_steps_question_count(impersonate_user={impersonate_user}, workflow_step_name={workflow_step_name})"
+    )
+
+    try:
+        # Validate mandatory fields using helper
+        error = validate_required_fields(impersonate_user=impersonate_user)
+        if error:
+            return error
+
+        # Build the optional filter parameter
+        filter_param = ""
+        if workflow_step_name is not None:
+            filter_param = f"(workflowStepName: {json.dumps(workflow_step_name)})"
+
+        # Build GraphQL query
+        query = f"""query accessApprovalWorkflowStepsQuestionCount {{
+  accessApprovalWorkflowStepsQuestionCount{filter_param} {{
+    workflowStepTitle
+    workflowStep
+    questionsCount
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.2 and caching support
+        result = await _execute_graphql_request_cached(
+            query,
+            impersonate_user,
+            graphql_version="3.2",
+            bearer_token=bearer_token,
+            use_cache=use_cache,
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract workflow step counts from the GraphQL response
+            if "data" in data and "accessApprovalWorkflowStepsQuestionCount" in data["data"]:
+                step_counts = data["data"]["accessApprovalWorkflowStepsQuestionCount"]
+
+                return build_success_response(
+                    data={"workflow_step_counts": step_counts},
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    workflow_step_filter=workflow_step_name if workflow_step_name else "none",
+                    steps_returned=len(step_counts) if isinstance(step_counts, list) else 1,
+                )
+            else:
+                return build_error_response(
+                    error_type="NoDataFound",
+                    message="No workflow step question counts found in response",
+                    impersonated_user=impersonate_user,
+                    workflow_step_filter=workflow_step_name if workflow_step_name else "none",
+                    response=data,
+                )
+        else:
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+                workflow_step_filter=workflow_step_name if workflow_step_name else "none",
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+        )
+
+
+@with_function_logging
+@mcp.tool()
 async def get_approval_details(
     impersonate_user: str, bearer_token: str, workflow_step: str = None
 ) -> str:
@@ -3451,6 +4767,155 @@ async def make_approval_decision(
 
 @with_function_logging
 @mcp.tool()
+async def get_approval_workflow_status(
+    impersonate_user: str,
+    bearer_token: str,
+    survey_object_ids: str,
+    viewer: str = "ASSIGNEE",
+    use_cache: bool = True,
+) -> str:
+    """
+    Get the approval workflow status for one or more access request approvals (requires Graph API v3.2+).
+
+    Returns the workflow step details including approval status, assignees, and completion time
+    for a given set of survey object IDs.
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+        survey_object_ids: Comma-separated survey object IDs to look up workflow status for.
+                          These are the surveyObjectKey values from get_pending_approvals.
+                          Example: "2EC3860F-8263-4B90-A52A-130C0B9A0CA9"
+                          PROMPT: "Please provide the survey object ID(s)"
+
+    Optional parameters:
+        viewer: The viewer perspective for the workflow status (default: "ASSIGNEE")
+                Controls which workflow steps are visible based on the viewer's role.
+        use_cache: Whether to use cache for this request (default: True)
+
+    LLM INSTRUCTIONS - WHERE TO GET survey_object_ids:
+        The survey_object_ids parameter comes from the surveyObjectKey field returned by
+        get_pending_approvals or get_approval_details. The typical workflow is:
+        1. Call get_pending_approvals to list pending approvals
+        2. Extract the surveyObjectKey from the approval(s) of interest
+        3. Pass those surveyObjectKey values as survey_object_ids to this function
+        Example surveyObjectKey: "2EC3860F-8263-4B90-A52A-130C0B9A0CA9"
+
+    LLM INSTRUCTIONS - RESPONSE FIELD GUIDE:
+        - active: Whether this workflow step is currently active (True/False)
+        - approvalStatus: Current status of the approval (e.g., "Pending", "Approved", "Rejected")
+        - uId: Unique identifier for the workflow step
+        - name: Internal name of the workflow step (e.g., "ResourceOwnerApproval")
+        - surveyObjectKey: The survey object key (matches the input)
+        - displayName: Human-readable workflow step name (e.g., "Perform resource owner approval")
+        - completeTime: When the step was completed (null if still pending)
+        - assignees: List of people assigned to this approval step, each with:
+          - displayName: Full name (e.g., "Paul Walker")
+          - firstName / lastName: Name parts
+          - id: Internal user ID (store internally, do not display)
+          - userName: Login username (e.g., "PAWA@OMADA.NET")
+
+    LLM INSTRUCTIONS - DISPLAY TO USER:
+        When presenting workflow status to the user, show:
+        1. Display Name (displayName) - the workflow step title
+        2. Approval Status (approvalStatus) - current status
+        3. Active (active) - whether this step is the current one
+        4. Assignees (assignees[].displayName, assignees[].userName) - who needs to act
+        5. Complete Time (completeTime) - when it was completed, if applicable
+        Do NOT display: uId, assignees[].id
+
+    Returns:
+        JSON response with approval workflow status details, or error message if the request fails
+    """
+    # ENTRY LOGGING
+    logger.debug(
+        f"DEBUG: ENTRY - get_approval_workflow_status(impersonate_user={impersonate_user}, survey_object_ids={survey_object_ids})"
+    )
+
+    try:
+        # Validate mandatory fields using helper
+        error = validate_required_fields(
+            impersonate_user=impersonate_user,
+            survey_object_ids=survey_object_ids,
+        )
+        if error:
+            return error
+
+        # Build GraphQL query
+        query = f"""query accessApprovalWorkflowStatus {{
+  accessApprovalWorkflowStatus(options: {{viewer: {viewer}}}, surveyObjectIds: {json.dumps(survey_object_ids)}) {{
+    active
+    approvalStatus
+    uId
+    name
+    surveyObjectKey
+    displayName
+    completeTime
+    assignees {{
+      displayName
+      firstName
+      id
+      lastName
+      userName
+    }}
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.2 and caching support
+        result = await _execute_graphql_request_cached(
+            query,
+            impersonate_user,
+            graphql_version="3.2",
+            bearer_token=bearer_token,
+            use_cache=use_cache,
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract workflow status from the GraphQL response
+            if "data" in data and "accessApprovalWorkflowStatus" in data["data"]:
+                workflow_status = data["data"]["accessApprovalWorkflowStatus"]
+
+                return build_success_response(
+                    data={"workflow_status": workflow_status},
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    survey_object_ids=survey_object_ids,
+                    viewer=viewer,
+                    steps_returned=len(workflow_status) if isinstance(workflow_status, list) else 1,
+                )
+            else:
+                return build_error_response(
+                    error_type="NoDataFound",
+                    message="No approval workflow status found in response",
+                    impersonated_user=impersonate_user,
+                    survey_object_ids=survey_object_ids,
+                    response=data,
+                )
+        else:
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+                survey_object_ids=survey_object_ids,
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+            survey_object_ids=survey_object_ids if "survey_object_ids" in locals() else "N/A",
+        )
+
+
+@with_function_logging
+@mcp.tool()
 async def get_compliance_workbench_survey_and_compliance_status(
     impersonate_user: str, bearer_token: str
 ) -> str:
@@ -3504,7 +4969,6 @@ async def get_compliance_workbench_survey_and_compliance_status(
         result = await _execute_graphql_request(
             query=query,
             impersonate_user=impersonate_user,
-            omada_base_url=None,  # Use default from env
             graphql_version="3.0",
             bearer_token=bearer_token,
         )
@@ -3537,6 +5001,263 @@ async def get_compliance_workbench_survey_and_compliance_status(
                 )
         else:
             # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+        )
+
+
+@with_function_logging
+@mcp.tool()
+async def get_compliance_workbench_data(
+    impersonate_user: str,
+    bearer_token: str,
+    show_accounts: bool = False,
+    use_cache: bool = True,
+) -> str:
+    """
+    Get compliance workbench data with per-system compliance summary including orphan accounts,
+    violations, and system health using Omada GraphQL API.
+
+    This is the tool to use when the user asks about:
+    - "orphan accounts" or "orphaned accounts" — look at the complianceStatus.orphaned field
+    - "system health" or "compliance health" — look at the systemHealth percentage
+    - "not approved" assignments per system — look at complianceStatus.notApproved
+    - "pending deprovisioning" — look at complianceStatus.pendingDeprovisioning
+    - "in violation" or "violations" per system — look at complianceStatus.inViolation
+    - Compliance overview or compliance dashboard
+    - Per-system compliance breakdown or summary
+
+    IMPORTANT LLM INSTRUCTIONS - DISPLAY TO USER:
+        Present results as a table with one row per system. Recommended columns:
+        - System Name
+        - System Health (percentage, e.g., "81.18%")
+        - Explicitly Approved
+        - Implicitly Approved
+        - Implicitly Assigned
+        - Not Approved
+        - Orphaned
+        - In Violation
+        - Pending Deprovisioning
+        - None (unclassified)
+
+        Skip systems where ALL compliance counts are zero unless the user asks for all systems.
+
+        When the user asks specifically about "orphan accounts":
+        - Filter/highlight systems where orphaned > 0
+        - If all systems show orphaned = 0, tell the user "No orphan accounts found across any system"
+
+        TECHNICAL IDs (do NOT display to user unless asked):
+        - system.id — internal GUID for the system
+        - system.systemCategory.id — internal GUID for the system category
+        - system.createTime — system creation timestamp
+        - system.autoCreateAccounts — internal system configuration flag
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+
+    Optional parameters:
+        show_accounts: Whether to include account-level detail (default: False).
+                      Set to True only if the user specifically asks for account-level data.
+        use_cache: Whether to use cache for this request (default: True)
+
+    Returns:
+        JSON response with per-system compliance data including:
+        - total_systems: Number of systems returned
+        - data: Array of system objects, each containing:
+            - systemHealth: Health percentage (0-100)
+            - system: System details (name, id, autoCreateAccounts, createTime, systemCategory)
+            - complianceStatus: Compliance counts (explicitlyApproved, implicitlyApproved,
+              implicitlyAssigned, none, notApproved, orphaned, inViolation, pendingDeprovisioning)
+    """
+    try:
+        # Validate mandatory fields using helper
+        error = validate_required_fields(
+            impersonate_user=impersonate_user,
+            bearer_token=bearer_token,
+        )
+        if error:
+            return error
+
+        # Build GraphQL query
+        show_accounts_value = "true" if show_accounts else "false"
+        query = f"""query GetComplianceWorkbenchData {{
+  complianceWorkbenchData(filters: {{showAccounts: {show_accounts_value}}}) {{
+    systemHealth
+    system {{
+      autoCreateAccounts
+      createTime
+      id
+      name
+      systemCategory {{
+        displayName
+        id
+      }}
+    }}
+    complianceStatus {{
+      explicitlyApproved
+      implicitlyApproved
+      implicitlyAssigned
+      none
+      notApproved
+      orhpaned
+      pendingDeprovisioning
+      inViolation
+    }}
+  }}
+}}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.3 WITH CACHING
+        result = await _execute_graphql_request_cached(
+            query,
+            impersonate_user,
+            graphql_version="3.3",
+            bearer_token=bearer_token,
+            use_cache=use_cache,
+        )
+
+        if result["success"]:
+            data = result["data"]
+            # Extract compliance workbench data from the GraphQL response
+            if "data" in data and "complianceWorkbenchData" in data["data"]:
+                workbench_data = data["data"]["complianceWorkbenchData"]
+
+                # Rename the misspelled "orhpaned" field to "orphaned" in each entry
+                for entry in workbench_data:
+                    if "complianceStatus" in entry and entry["complianceStatus"]:
+                        cs = entry["complianceStatus"]
+                        if "orhpaned" in cs:
+                            cs["orphaned"] = cs.pop("orhpaned")
+
+                return build_success_response(
+                    data=workbench_data,
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    total_systems=len(workbench_data),
+                )
+            else:
+                return build_error_response(
+                    error_type="NoDataFound",
+                    message="No compliance workbench data found in response",
+                    impersonated_user=impersonate_user,
+                    response=data,
+                )
+        else:
+            # Handle GraphQL request failure using helper
+            return build_error_response(
+                error_type=result.get("error_type", "GraphQLError"),
+                result=result,
+                impersonated_user=impersonate_user,
+            )
+
+    except Exception as e:
+        return build_error_response(
+            error_type=type(e).__name__,
+            message=str(e),
+            impersonated_user=impersonate_user,
+        )
+
+
+@with_function_logging
+@mcp.tool()
+async def get_graphql_api_versions(
+    impersonate_user: str,
+    bearer_token: str,
+) -> str:
+    """
+    Get the list of supported GraphQL API versions from the Omada Identity platform.
+
+    Use this tool when the user asks:
+    - "What API versions are available?"
+    - "What is the latest GraphQL version?"
+    - "Which API versions does Omada support?"
+    - "What version of the Graph API is running?"
+
+    IMPORTANT LLM INSTRUCTIONS - DISPLAY TO USER:
+        Present the versions as a simple list formatted as "major.minor" (e.g., "3.3").
+        Highlight the latest (highest) version.
+        Example output: "Omada supports GraphQL API versions 1.0 through 3.3. The latest version is 3.3."
+
+    REQUIRED PARAMETERS (prompt user if missing):
+        impersonate_user: Email address of the user to impersonate (e.g., "user@domain.com")
+                         PROMPT: "Please provide the email address to impersonate"
+        bearer_token: Bearer token for authentication (required for GraphQL API)
+                     PROMPT: "Please provide the bearer token"
+
+    Returns:
+        JSON response with:
+        - total_versions: Number of API versions available
+        - latest_version: The highest version available (e.g., "3.3")
+        - data: Array of version objects with major and minor fields
+    """
+    try:
+        # Validate mandatory fields using helper
+        error = validate_required_fields(
+            impersonate_user=impersonate_user,
+            bearer_token=bearer_token,
+        )
+        if error:
+            return error
+
+        # Build GraphQL query
+        query = """query GetGraphQLApiVersions {
+  versions {
+    major
+    minor
+  }
+}"""
+
+        logger.debug(f"GraphQL query: {query}")
+
+        # Execute GraphQL request with version 3.3
+        result = await _execute_graphql_request(
+            query=query,
+            impersonate_user=impersonate_user,
+            graphql_version="3.3",
+            bearer_token=bearer_token,
+        )
+
+        if result["success"]:
+            data = result["data"]
+            if "data" in data and "versions" in data["data"]:
+                versions = data["data"]["versions"]
+
+                # Find the latest version
+                latest = max(versions, key=lambda v: (v["major"], v["minor"]))
+                latest_version = f"{latest['major']}.{latest['minor']}"
+
+                # Format versions as "major.minor" strings
+                version_strings = [f"{v['major']}.{v['minor']}" for v in versions]
+
+                return build_success_response(
+                    data=versions,
+                    endpoint=result["endpoint"],
+                    impersonated_user=impersonate_user,
+                    total_versions=len(versions),
+                    latest_version=latest_version,
+                    version_list=version_strings,
+                )
+            else:
+                return build_error_response(
+                    error_type="NoDataFound",
+                    message="No version data found in response",
+                    impersonated_user=impersonate_user,
+                    response=data,
+                )
+        else:
             return build_error_response(
                 error_type=result.get("error_type", "GraphQLError"),
                 result=result,

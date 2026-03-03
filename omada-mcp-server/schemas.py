@@ -279,11 +279,16 @@ RESOURCE_SCHEMA = {
             "example": ""
         }
     },
+    "important_notes": {
+        "no_expand": "IMPORTANT: $expand is NOT supported on this OData endpoint. Reference fields (SYSTEMREF, ROLETYPEREF, ROLECATEGORY, ROLEFOLDER, OWNERREF, etc.) are returned as inline nested objects automatically. Do NOT use $expand — it will cause a 400 Bad Request error.",
+        "no_select_with_references": "IMPORTANT: Do NOT use $select with reference/collection fields (SYSTEMREF, ROLETYPEREF, ROLECATEGORY, ROLEFOLDER, OWNERREF, CHILDROLES, etc.) — it returns EMPTY objects. Only use $select with scalar fields (NAME, DESCRIPTION, ROLEID, etc.). To get reference field data, omit $select entirely.",
+        "no_any_lambda": "IMPORTANT: The any()/all() lambda operators are NOT supported in $filter on collection fields. Filters like OWNERREF/any(o: o/Id eq 123), CHILDROLES/any(), MANUALOWNER/any() return 500 Internal Server Error. This is a limitation of Omada's OData implementation. Workaround: retrieve all records and filter client-side."
+    },
     "common_queries": {
         "get_by_id": "Use query_omada_entity with entity_type='Resource' and filter_condition=\"Id eq {id}\"",
         "get_by_uid": "Use query_omada_entity with entity_type='Resource' and filter_condition=\"UId eq '{uid}'\"",
         "get_by_name": "Use query_omada_entity with entity_type='Resource' and filter_condition=\"contains(NAME, '{name}')\"",
-        "get_by_system": "Use query_omada_entity with entity_type='Resource' and expand='SYSTEMREF' and filter_condition=\"SYSTEMREF/Id eq {system_id}\"",
+        "get_by_system": "Use query_omada_resources with filter_condition=\"SYSTEMREF/Id eq {system_id}\" (no $expand needed — SYSTEMREF is returned inline)",
         "get_assignments": "Use query_calculated_assignments or get_calculated_assignments_detailed with resource_ids or resource_name parameter"
     }
 }
@@ -642,6 +647,9 @@ IDENTITY_SCHEMA = {
         }
     },
     "important_notes": {
+        "no_expand": "IMPORTANT: $expand is NOT supported on this OData endpoint. Reference fields (JOBTITLE_REF, COMPANY_REF, MANAGER_REF, DEPARTMENT_REF, etc.) are returned as inline nested objects automatically. Do NOT use $expand — it will cause a 400 Bad Request error.",
+        "no_select_with_references": "IMPORTANT: Do NOT use $select with reference fields (JOBTITLE_REF, MANAGER_REF, COMPANY_REF, DEPARTMENT_REF, etc.) — it returns EMPTY objects. Only use $select with scalar fields (EMAIL, FIRSTNAME, LASTNAME, etc.). To get reference field data, omit $select entirely.",
+        "no_any_lambda": "IMPORTANT: The any()/all() lambda operators are NOT supported in $filter on collection fields. Filters like MANAGER/any(m: m eq 'xxx') return 500 Internal Server Error. This is a limitation of Omada's OData implementation. Workaround: retrieve all records and filter client-side.",
         "UId_vs_Id_vs_IDENTITYID": "When using GraphQL tools like get_calculated_assignments_detailed, ALWAYS use the UId field (GUID format), NOT the Id (integer) or IDENTITYID (string username). This is a common mistake.",
         "example_workflow": "1. Query identity by email/name using query_omada_identity, 2. Extract the UId field from the result, 3. Use that UId in identity_ids parameter for get_calculated_assignments_detailed"
     },
@@ -652,6 +660,150 @@ IDENTITY_SCHEMA = {
         "get_by_name": "Use query_omada_identity with filter_condition=\"contains(LASTNAME, '{name}')\" or \"contains(DisplayName, '{name}')\"",
         "get_by_identity_id": "Use query_omada_identity with filter_condition=\"IDENTITYID eq '{identity_id}'\"",
         "get_assignments": "First get the identity's UId, then use query_calculated_assignments or get_calculated_assignments_detailed with identity_ids parameter"
+    }
+}
+
+
+ORGUNIT_SCHEMA = {
+    "entity": "Orgunit",
+    "description": "Represents an organizational unit (department, division, team, etc.) in Omada Identity. OrgUnits form a hierarchical structure that defines the organization's structure.",
+    "odata_endpoint": "/OData/DataObjects/Orgunit",
+    "fields": {
+        # Core identification fields
+        "Id": {
+            "type": "integer",
+            "description": "Internal database ID (numeric).",
+            "example": 1001354
+        },
+        "UId": {
+            "type": "string (GUID)",
+            "description": "Unique identifier (32-character GUID with dashes).",
+            "example": "60ccec0c-dad1-4df8-bb09-c77f15029fcd"
+        },
+        "DisplayName": {
+            "type": "string",
+            "description": "Full display name including the OUID in brackets.",
+            "example": "Organization [ORGANIZATION]"
+        },
+        "NAME": {
+            "type": "string",
+            "description": "Human-readable name of the OrgUnit.",
+            "example": "Organization"
+        },
+        "OUID": {
+            "type": "string",
+            "description": "Unique business identifier for the OrgUnit.",
+            "example": "ORGANIZATION"
+        },
+
+        # Timestamps
+        "CreateTime": {
+            "type": "datetime",
+            "description": "When the OrgUnit was created.",
+            "example": "2022-01-12T11:30:21.2060663Z"
+        },
+        "ChangeTime": {
+            "type": "datetime",
+            "description": "When the OrgUnit was last modified.",
+            "example": "2024-11-18T07:28:57.5224451Z"
+        },
+
+        # Status fields
+        "Deleted": {
+            "type": "boolean",
+            "description": "Whether the OrgUnit has been soft-deleted.",
+            "example": False
+        },
+        "DeleteTime": {
+            "type": "datetime",
+            "description": "When the OrgUnit was deleted (0001-01-01 if not deleted).",
+            "example": "0001-01-01T00:00:00Z"
+        },
+
+        # Technical fields
+        "CurrentVersionId": {
+            "type": "integer",
+            "description": "Current version ID for optimistic concurrency.",
+            "example": 1046378
+        },
+        "ODWBUSIKEY": {
+            "type": "string",
+            "description": "Business key for data warehouse integration.",
+            "example": "1_ORGANIZATION_ROOT"
+        },
+        "C_ADOU": {
+            "type": "string",
+            "description": "Active Directory OU path associated with this OrgUnit.",
+            "example": "OU=Users,OU=Global Banking Group,OU=Global,DC=corporate,DC=com"
+        },
+        "LASTEXEC_DELETEDCONTEXTSURV": {
+            "type": "datetime (nullable)",
+            "description": "Last execution time for deleted context surveillance.",
+            "example": None
+        },
+
+        # Reference fields (expandable)
+        "OUTYPE": {
+            "type": "reference",
+            "description": "OrgUnit type (e.g., Organization, Department, Team). Returns an object with Id, UId, DisplayName.",
+            "example": {"Id": 1001353, "UId": "a3dc19ec-13d4-45ee-89de-0d69db80104c", "DisplayName": "Organization"}
+        },
+        "PARENTOU": {
+            "type": "reference (nullable)",
+            "description": "Parent OrgUnit in the hierarchy. Null for root-level OrgUnits.",
+            "example": None
+        },
+        "MANAGER": {
+            "type": "reference[] (collection)",
+            "description": "Manager(s) assigned to this OrgUnit.",
+            "example": []
+        },
+        "EXPLICITOWNER": {
+            "type": "reference[] (collection)",
+            "description": "Explicit owner(s) of this OrgUnit.",
+            "example": [{"Id": 3502, "DisplayName": "Tech Ident Omada Identity"}]
+        },
+        "ROLESREF": {
+            "type": "reference[] (collection)",
+            "description": "Roles associated with this OrgUnit.",
+            "example": []
+        },
+        "CONTEXTSTATUS": {
+            "type": "reference (nullable)",
+            "description": "Context status of the OrgUnit.",
+            "example": None
+        },
+        "CLT_TAGS": {
+            "type": "reference[] (collection)",
+            "description": "Tags associated with the OrgUnit.",
+            "example": []
+        },
+        "SERVICEDESKAGENTS": {
+            "type": "reference[] (collection)",
+            "description": "Service desk agents for this OrgUnit.",
+            "example": []
+        },
+        "EXPLICITSERVICEDESKAGENTS": {
+            "type": "reference[] (collection)",
+            "description": "Explicitly assigned service desk agents.",
+            "example": []
+        }
+    },
+    "important_notes": {
+        "no_expand": "IMPORTANT: $expand is NOT supported on this OData endpoint. Reference fields (OUTYPE, PARENTOU, MANAGER, EXPLICITOWNER, etc.) are returned as inline nested objects automatically. Do NOT use $expand — it will cause a 400 Bad Request error.",
+        "no_select_with_references": "IMPORTANT: Do NOT use $select with reference/collection fields (OUTYPE, PARENTOU, MANAGER, EXPLICITOWNER, ROLESREF, etc.) — it returns EMPTY objects. Only use $select with scalar fields (NAME, OUID, C_ADOU, ODWBUSIKEY). To get reference field data, omit $select entirely.",
+        "no_any_lambda": "IMPORTANT: The any()/all() lambda operators are NOT supported in $filter on collection fields. Filters like MANAGER/any(), EXPLICITOWNER/any(o: o/Id eq 123) return 500 Internal Server Error. This is a limitation of Omada's OData implementation. Workaround: retrieve all records and filter client-side.",
+        "hierarchy": "OrgUnits form a tree structure via the PARENTOU field. Root OrgUnits have PARENTOU=null.",
+        "OUTYPE": "Every OrgUnit has a type (e.g., Organization, Department, Team) accessible via the OUTYPE reference field.",
+        "DisplayName_format": "DisplayName typically follows the pattern 'Name [OUID]', e.g., 'Organization [ORGANIZATION]'."
+    },
+    "common_queries": {
+        "get_by_name": "Use query_omada_orgunits with field_filters=[{\"field\": \"NAME\", \"value\": \"Finance\", \"operator\": \"eq\"}]",
+        "get_by_ouid": "Use query_omada_orgunits with field_filters=[{\"field\": \"OUID\", \"value\": \"FIN\", \"operator\": \"eq\"}]",
+        "get_children": "Use query_omada_orgunits with filter_condition=\"PARENTOU/Id eq {parent_id}\"",
+        "get_with_details": "Reference fields are returned inline automatically. Just query: query_omada_orgunits with no special expand needed — OUTYPE, PARENTOU, MANAGER, EXPLICITOWNER are all included in the response.",
+        "search_by_name": "Use query_omada_orgunits with filter_condition=\"contains(NAME, 'search_term')\"",
+        "get_root_orgunits": "Use query_omada_orgunits with filter_condition=\"PARENTOU eq null\""
     }
 }
 
@@ -681,6 +833,18 @@ def register_schemas(mcp):
         """
         return json.dumps(IDENTITY_SCHEMA, indent=2)
 
+    @mcp.resource("schema://omada/orgunit")
+    def get_orgunit_schema() -> str:
+        """
+        Schema definition for the Omada OrgUnit (Organizational Unit) entity.
+
+        Returns the complete field definitions, types, descriptions, and examples
+        for the OrgUnit entity used in Omada Identity. Use this to understand
+        the data structure when working with organizational units like departments,
+        divisions, and teams.
+        """
+        return json.dumps(ORGUNIT_SCHEMA, indent=2)
+
     @mcp.resource("schema://omada/entities")
     def get_all_schemas() -> str:
         """
@@ -699,6 +863,11 @@ def register_schemas(mcp):
                     "uri": "schema://omada/identity",
                     "entity": "Identity",
                     "description": "People, users, service accounts in the identity system"
+                },
+                {
+                    "uri": "schema://omada/orgunit",
+                    "entity": "Orgunit",
+                    "description": "Organizational units - departments, divisions, teams, and hierarchical org structure"
                 }
             ],
             "usage": "Fetch a schema URI to get complete field definitions, types, and examples"

@@ -755,6 +755,7 @@ Query these URIs to get complete field definitions:
 | schema://omada/entities | All | List of all available schemas |
 | schema://omada/identity | Identity | Users, employees, service accounts |
 | schema://omada/resource | Resource | Roles, permissions, access rights |
+| schema://omada/orgunit | Orgunit | Departments, divisions, teams, org hierarchy |
 
 **How to Use Schemas:**
 
@@ -780,12 +781,44 @@ Check the schema to understand:
 - **RISKSCORE**, **RISKLEVEL**: Risk information
 - **RESOURCESTATUS**: Current status (Active, Inactive, etc.)
 
+**4. OrgUnit Schema Highlights:**
+- **OUID**: Unique business identifier (e.g., "ORGANIZATION")
+- **NAME**: Human-readable name (e.g., "Organization")
+- **OUTYPE**: Reference to OrgUnit type (Organization, Department, Team)
+- **PARENTOU**: Parent OrgUnit reference (null for root-level)
+- **MANAGER**: Manager(s) of this OrgUnit
+- **EXPLICITOWNER**: Explicit owner(s) of this OrgUnit
+- **C_ADOU**: Active Directory OU path
+
 **Common Mistakes to Avoid:**
 
 ❌ Using "Id" instead of "UId" for GraphQL queries
 ❌ Using "IDENTITYID" (login name) instead of "UId"
 ❌ Using lowercase field names (use "EMAIL" not "email")
 ❌ Forgetting that references are objects with nested fields
+❌ Using $expand on DataObjects endpoints (Identity, Resource, Orgunit) — causes 400 errors!
+❌ Using $select with reference fields (MANAGER, SYSTEMREF, OUTYPE, etc.) — returns empty objects!
+❌ Using any()/all() lambda filters on collection fields — returns 500 errors!
+
+**CRITICAL - OData Limitations:**
+
+**1. $expand NOT supported on DataObjects:**
+- $expand is **NOT supported** on DataObjects endpoints (Identity, Resource, Orgunit, Role, Account, etc.)
+- Reference fields (MANAGER, OUTYPE, SYSTEMREF, JOBTITLE_REF, etc.) are returned as **inline nested objects automatically** — no $expand needed
+- $expand **ONLY works** on BuiltIn/CalculatedAssignments with values: Identity, Resource, ResourceType
+- If you need reference data, just query the entity — the references are already included in the response
+
+**2. $select with reference fields returns EMPTY objects:**
+- Do NOT use $select with reference/collection fields (MANAGER, OUTYPE, PARENTOU, SYSTEMREF, JOBTITLE_REF, OWNERREF, CHILDROLES, etc.)
+- $select only works correctly with scalar fields (NAME, EMAIL, FIRSTNAME, OUID, ROLEID, etc.)
+- To get reference field data, **omit $select entirely** and let the API return all fields
+- Use summary_mode=True instead of $select — it filters fields client-side after receiving the full response
+
+**3. any()/all() lambda filters NOT supported (returns 500 error):**
+- Omada OData does NOT support lambda operators on collection-type reference fields
+- Filters like `OWNERREF/any(o: o/Id eq 123)`, `MANAGER/any()`, `CHILDROLES/any()`, `EXPLICITOWNER/any(o: o/Id eq 123)`, `MANUALOWNER/any()` all return **500 Internal Server Error**
+- This is a limitation of Omada's OData implementation (subset of the OData spec)
+- **Workaround**: Retrieve all records (omit the collection filter) and filter client-side, or use the GraphQL API instead
 
 **Query Schema Example:**
 To see all Identity fields with types and examples:
@@ -794,10 +827,13 @@ To see all Identity fields with types and examples:
 To see all Resource fields:
 - Fetch: schema://omada/resource
 
+To see all OrgUnit fields:
+- Fetch: schema://omada/orgunit
+
 **Pro Tips:**
 - Always use UId (GUID format) for GraphQL tools like get_calculated_assignments_detailed
 - Field names are UPPERCASE in OData queries
-- Reference fields (like SYSTEMREF) are objects with Id, UId, and DisplayName
+- Reference fields (like SYSTEMREF) are objects with Id, UId, and DisplayName — returned inline, no $expand needed
 
 Would you like me to fetch a specific schema for you?
 """
